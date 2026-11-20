@@ -192,7 +192,7 @@ Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICA
 
 ## 10. How it was built
 
-I built Cleo with Claude Code in seven days (2026-11-14 to 2026-11-20). The working rules, the phase commands and the plan were drafted with Claude in a chat before the repo existed. The spec came before the code; when something was unclear, Claude stopped and asked, and every decision went into [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md). Sessions were short, so all state lived in files and commits.
+I built Cleo with Claude Code Assistance, The working rules, the phase commands and the plan were drafted with Claude in a chat before the repo existed. The spec came before the code; when something was unclear, Claude stopped and asked, and every decision went into [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md). Sessions were short, so all state lived in files and commits.
 
 | Stage | Model | Mode | Output tokens | Result |
 |---|---|---|---|---|
