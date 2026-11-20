@@ -1,0 +1,33 @@
+[tasks]
+w8 w8_g
+w8_cover w8_g
+w9 w9_g
+w9_cover w9_g
+
+[options]
+w8: mode prove
+w8: depth 6
+w8_cover: mode cover
+w8_cover: depth 14
+w9: mode prove
+w9: depth 6
+w9_cover: mode cover
+w9_cover: depth 14
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_fifo.v
+w8_g: hierarchy -top jspe_fifo
+w9_g: hierarchy -top jspe_fifo -chparam W 9
+proc
+expose jspe_fifo/v jspe_fifo/m1 jspe_fifo/m2 jspe_fifo/m3
+prep -top jspe_fifo
+w8_g: read -formal -sv fv_fifo.v
+w9_g: read -formal -sv -DFV_W9 fv_fifo.v
+prep -top fv_fifo
+
+[files]
+../src/jspe_fifo.v
+fv_fifo.v

@@ -1,0 +1,54 @@
+# planted RTL mutants of src/jspe_seq.v for formal/seq.sby (make mutate B=seq); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+# recovered from the 2026-11-19 sub-step runs: fetch m01-m12, evt e01-e13, wch w01-w16, dec d01-d07; fp_reset0 = the pre-D109 reset (regression)
+rtl: jspe_seq.v
+mutants:
+  - {name: m01_late_refill, task: fetch, old: "  wire req_ir  = other & (adv_q ? ~pfv : ~irv);\n", new: "  wire req_ir  = other & ~adv_q & ~irv;\n"}
+  - {name: m02_no_prefetch, task: fetch, old: "  wire req_pf  = other & ~adv_q & irv & ~pfv;\n", new: "  wire req_pf  = 1'b0;\n"}
+  - {name: m03_red_keeps_pf, task: fetch, old: "  wire pfv_n = ~redir & (arr_pf | (pfv & ~adv & ~fold));\n", new: "  wire pfv_n = (arr_pf | (pfv & ~adv & ~fold));\n"}
+  - {name: m04_read_overlap, task: fetch, old: "  wire other   = act & ~arr_v & ~mo_now & ~xm & ~redir & ~fold_pre;\n", new: "  wire other   = act & ~mo_now & ~xm & ~redir & ~fold_pre;\n"}
+  - {name: m05_pf_addr, task: fetch, old: "  assign addr = mem_req ? maddr : redir ? target : fold_pre ? ftarget : req_pf ? fp : adv_q ? fp : pc;\n", new: "  assign addr = mem_req ? maddr : redir ? target : fold_pre ? ftarget : req_pf ? pc : adv_q ? fp : pc;\n"}
+  - {name: m06_red_addr, task: fetch, old: "  assign addr = mem_req ? maddr : redir ? target : fold_pre ? ftarget : req_pf ? fp : adv_q ? fp : pc;\n", new: "  assign addr = mem_req ? maddr : redir ? fp : fold_pre ? ftarget : req_pf ? fp : adv_q ? fp : pc;\n"}
+  - {name: m07_fold_late, task: fetch, old: "  wire req_fld = fold_pre & ~mo_now;\n", new: "  wire req_fld = 1'b0;\n"}
+  - {name: m08_drop_pending, task: fetch, old: "  assign req  = mem_req | req_red | req_fld | req_ir | req_pf;\n", new: "  assign req  = mem_req | req_red | req_fld | req_ir | (req_pf & ~waiting);\n"}
+  - {name: m09_pc_not_adv, task: fetch, old: "      else if (adv) pc <= (pfv & fold) ? ftarget : fp;\n", new: "      else if (adv & pfv) pc <= (pfv & fold) ? ftarget : fp;\n"}
+  - {name: m10_ld_succ_late, task: fetch, old: "  wire arr_f  = arr_v & ~fl_ld;\n", new: "  wire arr_f  = arr_v & ~fl_ld & ~mo_v;\n", equivalent: "an instruction read in flight implies no ld/st in progress (h_fi, proven), so ~mo_v is 1 whenever arr_f is"}
+  - {name: m11_ld_succ_late, task: fetch, old: "  wire other   = act & ~arr_v & ~mo_now & ~xm & ~redir & ~fold_pre;\n", new: "  reg ld_q; always @(posedge clk) ld_q <= ld_done; wire other   = act & ~arr_v & ~mo_now & ~xm & ~redir & ~fold_pre & ~ld_q;\n"}
+  - {name: m12_pf_late, task: fetch, old: "  wire req_pf  = other & ~adv_q & irv & ~pfv;\n", new: "  reg a_q; always @(posedge clk) a_q <= irv & ~adv & ~redir; wire req_pf  = other & ~adv_q & irv & ~pfv & a_q;\n"}
+  - {name: e01_wait_noclr, task: evt, old: "  wire fclr = ~act | wait_now | wabort;\n", new: "  wire fclr = ~act | wabort;\n"}
+  - {name: e02_no_double, task: evt, old: "        d_n[k] = f[k];\n", new: "        d_n[k] = 1'b0;\n"}
+  - {name: e03_consume_keeps, task: evt, old: "        f_n[k] = f[k] & live[k];\n", new: "        f_n[k] = f[k];\n"}
+  - {name: e04_tstart_noclr, task: evt, old: "      if (fclr || (t_start && k >= 8)) begin\n", new: "      if (fclr) begin\n"}
+  - {name: e05_engine_beats_host, task: evt, old: "      ovr <= rx_ovf | (~clr_ovr & ((ovr & ~(fire & is_ovclr)) | ovr_set));\n", new: "      ovr <= rx_ovf | (~clr_ovr & (ovr & ~(fire & is_ovclr))) | ovr_set;\n"}
+  - {name: e06_ovclr_beats_dbl, task: evt, old: "      ovr <= rx_ovf | (~clr_ovr & ((ovr & ~(fire & is_ovclr)) | ovr_set));\n", new: "      ovr <= rx_ovf | (~clr_ovr & ((ovr | ovr_set) & ~(fire & is_ovclr)));\n"}
+  - {name: e07_pull_no_ovr, task: evt, old: "  wire ovr_set = fire & ((gev_v & d[gev]) | (is_txw & ~htx) | (is_pull & ~hrx));\n", new: "  wire ovr_set = fire & ((gev_v & d[gev]) | (is_txw & ~htx));\n"}
+  - {name: e08_guard_no_latch, task: evt, old: "  wire [9:0] evt = live | f;\n", new: "  wire [9:0] evt = live;\n"}
+  - {name: e09_abort_noclr, task: evt, old: "  wire fclr = ~act | wait_now | wabort;\n", new: "  wire fclr = ~act | wait_now;\n"}
+  - {name: e10_inactive_latch, task: evt, old: "  wire fclr = ~act | wait_now | wabort;\n", new: "  wire fclr = wait_now | wabort;\n"}
+  - {name: e11_dbl_no_ovr, task: evt, old: "  wire ovr_set = fire & ((gev_v & d[gev]) | (is_txw & ~htx) | (is_pull & ~hrx));\n", new: "  wire ovr_set = fire & ((is_txw & ~htx) | (is_pull & ~hrx));\n"}
+  - {name: e12_tick_tock_swap, task: evt, old: "  wire [3:0] gev = g[3] ? {1'b0, g[2:0]} : (g == G_TICK) ? 4'd8 : 4'd9;\n", new: "  wire [3:0] gev = g[3] ? {1'b0, g[2:0]} : (g == G_TICK) ? 4'd9 : 4'd8;\n"}
+  - {name: e13_host_beats_rxovf, task: evt, old: "      ovr <= rx_ovf | (~clr_ovr & ((ovr & ~(fire & is_ovclr)) | ovr_set));\n", new: "      ovr <= ~clr_ovr & (rx_ovf | (ovr & ~(fire & is_ovclr)) | ovr_set);\n"}
+  - {name: w01_level_fire, task: wch, old: "  wire wf0 = wrun & wen[0] & (cc0[13] ^ cc0[12]) & cv0 & ~wprev[0];\n", new: "  wire wf0 = wrun & wen[0] & (cc0[13] ^ cc0[12]) & cv0;\n"}
+  - {name: w02_vec_prio, task: wch, old: "  wire [8:0] target = wf0 ? wv0 : wf1 ? wv1 : (jump & jabs) ? (is_ret ? l : ir[8:0]) : pcrel;\n", new: "  wire [8:0] target = wf1 ? wv1 : wf0 ? wv0 : (jump & jabs) ? (is_ret ? l : ir[8:0]) : pcrel;\n", equivalent: "wf1 already contains ~wf0 (jspe_seq.v:102), the watcher fires are exclusive, so the target mux order cannot matter"}
+  - {name: w03_mode3_on, task: wch, old: "  wire wf0 = wrun & wen[0] & (cc0[13] ^ cc0[12]) & cv0 & ~wprev[0];\n", new: "  wire wf0 = wrun & wen[0] & (cc0[13] | cc0[12]) & cv0 & ~wprev[0];\n"}
+  - {name: w04_fire_in_exec, task: wch, old: "  wire wrun = run & ~xm & ~rst;\n", new: "  wire wrun = (run | xm) & ~rst;\n"}
+  - {name: w05_wprev_run, task: wch, old: "      wprev <= {cv1, cv0};\n", new: "      if (run) wprev <= {cv1, cv0};\n"}
+  - {name: w06_call_link, task: wch, old: "      if (wf & wcall) l <= pc;\n", new: "      if (wf & wcall) l <= pcrel;\n"}
+  - {name: w07_lut_ab_swap, task: wch, old: "  wire cv0 = cc0[4'd8 + {2'd0, ccv[cc0[7:4]], ccv[cc0[3:0]]}];\n", new: "  wire cv0 = cc0[4'd8 + {2'd0, ccv[cc0[3:0]], ccv[cc0[7:4]]}];\n"}
+  - {name: w08_halt_no_adv, task: wch, old: "  wire fire_adv = fire & ~is_mem & ~jump & ~loop;\n", new: "  wire fire_adv = fire & ~is_mem & ~jump & ~loop & ~is_halt;\n"}
+  - {name: w09_trap_drops_ir, task: wch, old: "  wire trapx = trap_now & xm;\n", new: "  wire trapx = trap_now;\n"}
+  - {name: w10_trap_keeps_run, task: wch, old: "      if (trap_now | (fire & is_halt) | (complete & stepm & ~xm)) run <= 1'b0;\n", new: "      if ((fire & is_halt) | (complete & stepm & ~xm)) run <= 1'b0;\n"}
+  - {name: w11_run_keeps_halted, task: wch, old: "        run    <= 1'b1;\n        halted <= 1'b0;\n", new: "        run    <= 1'b1;\n"}
+  - {name: w12_trap_beats_host, task: wch, old: "      if (clr_ht) begin\n", new: "      if (clr_ht & ~trap_now) begin\n"}
+  - {name: w13_watch_field, task: wch, old: "      if (fire & is_watch) wen <= ir[5:4];\n", new: "      if (fire & is_watch) wen <= ir[4:3];\n"}
+  - {name: w14_wv_index, task: wch, old: "          CREG_WV0: wv0 <= opb[8:0];\n", new: "          CREG_WV1: wv0 <= opb[8:0];\n"}
+  - {name: w15_store_in_wf, task: wch, old: "  wire mo_now = (mo_v | (fire & is_mem)) & ~wf & ~rst;\n", new: "  wire mo_now = (mo_v | (fire & is_mem)) & ~rst;\n"}
+  - {name: w16_abort_call_swap, task: wch, old: "  wire wabort = wf & ~wcall;\n", new: "  wire wabort = wf & wcall;\n"}
+  - {name: d01_jf_cond, task: dec, old: "  wire undef_jf = (ir[11:8] > COND_MIS) | (ir[11:7] == 5'd1);\n", new: "  wire undef_jf = (ir[11:8] >= COND_MIS) | (ir[11:7] == 5'd1);\n"}
+  - {name: d02_gm_k4, task: dec, old: "                  (sub == 2'd2 & ((gk == 3'd0 & gn == 3'd7) | gk == 3'd4 | (gk == 3'd5 & gn[2]) | gk[2:1] == 2'b11));\n", new: "                  (sub == 2'd2 & ((gk == 3'd0 & gn == 3'd7) | (gk == 3'd5 & gn[2]) | gk[2:1] == 2'b11));\n"}
+  - {name: d03_wcfg_sig, task: dec, old: "                  (ir[11:9] == 3'b100 & ir[0]) | (ir[11:8] == 4'hA & ir[7:3] == CREG_SIG) | sub == 2'd3;\n", new: "                  (ir[11:9] == 3'b100 & ir[0]) | sub == 2'd3;\n"}
+  - {name: d04_txw_pull, task: dec, old: "  wire is_txw   = f_gm & ((sub == 2'd1 & ~ir[8]) | sub == 2'd3);      // push, pushh, evt\n", new: "  wire is_txw   = f_gm & ((sub == 2'd1) | sub == 2'd3);      // push, pushh, evt\n"}
+  - {name: d05_fmt_jf, task: dec, old: "  wire f_jf = (ir[15:12] == 4'hC);\n", new: "  wire f_jf = (ir[15:13] == 3'b110);\n"}
+  - {name: d06_call, task: dec, old: "  wire is_call  = f_rx & (ir[11:9] == 3'b011);\n", new: "  wire is_call  = f_rx & (ir[11:9] == 3'b010);\n"}
+  - {name: d07_alu3, task: dec, old: "  wire undef_rx = (sub == 2'd0 & (ir[9:6] == 4'd3 | ir[9:6] > ALU_RRC)) |\n", new: "  wire undef_rx = (sub == 2'd0 & (ir[9:6] > ALU_RRC)) |\n"}
+  - {name: fp_reset0, task: fetch, old: "      fp      <= 9'd1;\n", new: "      fp      <= 9'd0;\n"}

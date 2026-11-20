@@ -1,0 +1,12 @@
+# planted RTL mutants of src/jspe_arb.v for formal/arb.sby (make mutate B=arb); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+# recovered from the arb proof run of 2026-11-19 (session scratch dirs mut_arb/m*)
+rtl: jspe_arb.v
+tasks: [prove]
+mutants:
+  - {name: m1_hgnt, task: prove, old: "  assign h_gnt = h_req & ~e_any;\n", new: "  assign h_gnt = h_req;\n"}
+  - {name: m2_skip3, task: prove, old: "    else slot <= slot + 2'd1;\n", new: "    else slot <= (slot == 2'd2) ? 2'd0 : slot + 2'd1;\n"}
+  - {name: m3_weungated, task: prove, old: "  assign mem_we = (|(e_gnt & e_we)) | (h_gnt & h_we);\n", new: "  assign mem_we = (|(e_req & e_we)) | (h_gnt & h_we);\n"}
+  - {name: m4_ownbits, task: prove, old: "  wire [1:0] own = slotmap[{slot, 1'b0} +: 2];\n", new: "  wire [1:0] own = {slotmap[{slot, 1'b0}], slotmap[{slot, 1'b1}]};\n"}
+  - {name: m5_addr3, task: prove, old: "                  | ({AW{e_gnt[2]}} & e_addr[2*AW+:AW]) | ({AW{e_gnt[3]}} & e_addr[3*AW+:AW])\n", new: "                  | ({AW{e_gnt[2]}} & e_addr[2*AW+:AW]) | ({AW{e_gnt[2]}} & e_addr[3*AW+:AW])\n"}
+  - {name: m6_rstslot, task: prove, old: "    if (!rst_n) slot <= 2'd0;\n", new: "    if (!rst_n) slot <= 2'd1;\n"}

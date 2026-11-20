@@ -1,0 +1,32 @@
+[tasks]
+prove
+cover cut
+bmc cut
+
+[options]
+prove: mode prove
+prove: depth 8
+cover: mode cover
+cover: depth 20
+bmc: mode bmc
+bmc: depth 16
+# bmc reason: byte-level receiver cut (a byte at most every other clock), concrete traces for make mutate
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_link.v
+hierarchy -top jspe_link
+proc
+expose jspe_link/rx_st jspe_link/pk jspe_link/b_vld jspe_link/b jspe_link/rx_brk jspe_link/p_st jspe_link/need jspe_link/argi jspe_link/op jspe_link/a0 jspe_link/a1 jspe_link/sel_v jspe_link/sel jspe_link/wr_left jspe_link/wr_lo_v jspe_link/wr_addr jspe_link/tx_ld jspe_link/tx_byte jspe_link/b2_n jspe_link/take_nt jspe_link/sw_st jspe_link/take_rp jspe_link/rp_hdr jspe_link/rp_code jspe_link/cur jspe_link/cur_v jspe_link/b2v jspe_link/b2 jspe_link/rp_act
+cut: cutpoint jspe_link/rx_st jspe_link/rx_cnt jspe_link/rx_i jspe_link/rx_sh jspe_link/tx_busy
+prep -top jspe_link
+prove: read -formal -sv fv_link.v
+cut: read -formal -sv -DLINK_CUT fv_link.v
+prep -top fv_link
+
+[files]
+../src/jspe_link.v
+../src/jspe_isa.vh
+fv_link.v

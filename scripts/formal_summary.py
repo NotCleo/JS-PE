@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+# make formal: per-property result of formal/<block>.sby from the sby status database -> terminal + formal/RESULTS.md
+import csv, glob, io, os, re, subprocess, sys, datetime
+
+BUILD = "build/formal"
+
+
+def status_rows(block):
+    out = subprocess.run(["sby", "--status", "--statusfmt", "csv", "--latest", "--prefix", f"../{BUILD}/{block}", f"{block}.sby"],
+                         cwd="formal", capture_output=True, text=True).stdout
+    i = out.find("time,task_name")
+    return list(csv.DictReader(io.StringIO(out[i:]))) if i >= 0 else []
+
+
+def norm(name, block):
+    name = name.split(".", 1)[1] if name.startswith(f"fv_{block}") and "." in name else name
+    m = re.match(r"\\?\w+\[(\d+)\]\.\w+ \.(\w+)$", name)
+    return f"{m.group(2)}[{m.group(1)}]" if m else name
+
+
+def descriptions(block):
+    d = {}
+    for path in glob.glob(f"formal/fv_{block}*.v"):
+        for line in open(path):
+            m = re.match(r"\s*(\w+):\s*assert\b.*;\s*//\s*(.*)$", line)
+            if m:
+                d[m.group(1)] = m.group(2).strip()
+    return d
+
+
+def task_depths(block):
+    # prove tasks: (k of the induction, base-case depth); bmc tasks: depth reached; '# reason:' lines from the .sby
+    info, reasons = {}, {}
+    for line in open(f"formal/{block}.sby"):
+        m = re.match(r"#\s*(\w+)?\s*reason:\s*(.*)", line)
+        if m:
+            reasons[m.group(1) or ""] = m.group(2).strip()
+    for wd in glob.glob(f"{BUILD}/{block}_*"):
+        task = wd[len(f"{BUILD}/{block}_"):]
+        ind = glob.glob(f"{wd}/engine_*/logfile_induction.txt")
+        base = glob.glob(f"{wd}/engine_*/logfile_basecase.txt") or glob.glob(f"{wd}/engine_*/logfile.txt")
+        steps = [int(s) for f in base for s in re.findall(r"Checking assertions in step (\d+)", open(f).read())]
+        n = max(steps) + 1 if steps else 0
+        if ind and "Temporal induction successful" in open(ind[0]).read():
+            k = open(ind[0]).read().count("Trying induction in step")
+            info[task] = f"k-induction k={k} (base {n})"
+        elif n:
+            info[task] = f"bmc depth {n}" + (f" ({reasons.get(task, reasons.get('', 'no reason given'))})")
+    return info
+
+
+def main(block, partial=()):
+    rows = status_rows(block)
+    if not rows:
+        log = open(f"{BUILD}/{block}.log").read().splitlines() if os.path.exists(f"{BUILD}/{block}.log") else []
+        print("\n".join([l for l in log if "ERROR" in l][:5]) or "no status (see build/formal/%s.log)" % block)
+        return 1
+    desc, depth = descriptions(block), task_depths(block)
+    asserts, covers = {}, {}
+    for r in rows:
+        name = norm(r["name"], block)
+        if r["kind"] == "ASSERT":
+            asserts.setdefault(name, []).append((r["task_name"], r["status"], r["depth"]))
+        elif r["kind"] == "COVER":
+            covers[name] = (r["status"], r["depth"])
+    def split(n):
+        m = re.match(r"[ahc]_(\w+?)(\[\d+\])?$", n)
+        return (m.group(1), m.group(2) or "") if m else (n, "")
+    owner = {}  # cover -> assert with the longest matching base (c_x_y pairs with a_x_y before a_x)
+    for c in covers:
+        cb, ci = split(c)
+        best = [a for a in asserts if split(a)[1] == ci and (cb == split(a)[0] or cb.startswith(split(a)[0] + "_"))]
+        if best:
+            owner[c] = max(best, key=lambda a: len(split(a)[0]))
+    used, lines, bad = set(owner), [], 0
+    for a in sorted(asserts):
+        cs = sorted(c for c in owner if owner[c] == a)
+        res = " ".join(s for _, s, _ in asserts[a])
+        how = "; ".join(depth.get(t, f"depth {d}") if s == "PASS" else f"step {d}" if s == "FAIL" else "-" for t, s, d in asserts[a])
+        cov = " ".join(f"{c}@{covers[c][1]}" if covers[c][0] == "PASS" else f"{c}:UNREACHED" for c in cs) or "NO COVER"
+        bad += any(s != "PASS" for _, s, _ in asserts[a]) or cov == "NO COVER" or "UNREACHED" in cov
+        lines.append((a, res, how, cov, desc.get(re.sub(r"\[\d+\]$", "", a), "")))
+    extra = [c for c in sorted(covers) if c not in used]
+    bad += sum(covers[c][0] != "PASS" for c in extra)
+    nc = sum(s == "PASS" for s, _ in covers.values())
+    w = max(len(l[0]) for l in lines)
+    print(f"{block}: {sum(all(s == 'PASS' for _, s, _ in v) for v in asserts.values())}/{len(asserts)} asserts PASS, {nc}/{len(covers)} covers reached")
+    for a, res, how, cov, _ in lines:
+        print(f"  {a:<{w}}  {res:<4}  {how}  | {cov}")
+    for c in extra:
+        print(f"  {c:<{w}}  cover {'@' + covers[c][1] if covers[c][0] == 'PASS' else 'UNREACHED'}")
+    if partial:
+        print(f"partial run (T={' '.join(partial)}): formal/RESULTS.md not updated, run without T for the record")
+    else:
+        write_results(block, lines, extra, covers)
+    return 1 if bad else 0
+
+
+def write_results(block, lines, extra, covers):
+    path = "formal/RESULTS.md"
+    text = open(path).read() if os.path.exists(path) else "# Formal results (generated by `make formal B=<block>`; do not edit sections by hand)\n"
+    sec = [f"## {block} ({datetime.date.today()})", "", "| property | meaning | result | depth | covers (step) |", "|---|---|---|---|---|"]
+    sec += [f"| {a} | {d} | {r} | {h} | {c} |" for a, r, h, c, d in lines]
+    if extra:
+        sec += ["", "Other covers: " + ", ".join(f"{c}@{covers[c][1]}" if covers[c][0] == "PASS" else f"{c} UNREACHED" for c in extra)]
+    parts = re.split(r"(?m)^(?=## )", text)
+    parts = [p for p in parts if not p.startswith(f"## {block} ")]
+    parts.append("\n".join(sec) + "\n\n")
+    head, secs = parts[0], sorted(parts[1:], key=lambda p: p.split()[1])
+    open(path, "w").write(head.rstrip("\n") + "\n\n" + "".join(secs).rstrip("\n") + "\n")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1], sys.argv[2:]))

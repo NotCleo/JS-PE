@@ -1,0 +1,20 @@
+# planted RTL mutants of src/jspe_fifo.v for formal/fifo.sby (make mutate B=fifo); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_fifo.v
+tasks: [w8, w9]
+depth: 12   # base case: two mutants need 12 clocks for a trace (at 6 only the induction fails)
+mutants:
+  - {name: push_on_pop, old: "wire push = wr & ~v[3];", new: "wire push = wr & (~v[3] | rd);"}
+  - {name: pop_on_wr, old: "wire pop = rd & v[0];", new: "wire pop = rd & (v[0] | wr);"}
+  - {name: ld_nopop, old: "~(pop ? {1'b0, v[3:1]} : v)", new: "~v"}
+  - {name: flush_wr, old: "if (flush) v <= 4'b0000;", new: "if (flush & ~wr) v <= 4'b0000;"}
+  - {name: v_shift, old: "else if (pop & ~push) v <= {1'b0, v[3:1]};", new: "else if (pop & ~push) v <= {v[3:1], 1'b0};"}
+  - {name: m1_noshift, old: "else if (pop) m1 <= m2;", new: "else if (pop & ~wr) m1 <= m2;"}
+  - {name: m2_from_m1, old: "else if (pop) m2 <= m3;", new: "else if (pop) m2 <= m1;"}
+  - {name: full_v2, old: "assign full = v[3];", new: "assign full = v[2];"}
+  - {name: free_bit0, old: "(v[0] & ~v[1]) | (v[2] & ~v[3])", new: "(v[0] & ~v[1]) | (v[1] & ~v[3])"}
+  - {name: empty_v1, old: "assign empty = ~v[0];", new: "assign empty = ~v[1];"}
+  - {name: rdata_m1, old: "assign rdata = m0;", new: "assign rdata = v[1] ? m1 : m0;"}
+  - {name: ld_all, old: "wire [3:0] ld = {4{push}} & ~(pop ? {1'b0, v[3:1]} : v);", new: "wire [3:0] ld = {4{push}};"}
+  - {name: cnt_pushpop, old: "else if (push & ~pop) v <= {v[2:0], 1'b1};", new: "else if (push) v <= {v[2:0], 1'b1};"}
+  - {name: m0_prio, old: "if (ld[0]) m0 <= wdata;\n    else if (pop) m0 <= m1;", new: "if (pop) m0 <= m1;\n    else if (ld[0]) m0 <= wdata;"}

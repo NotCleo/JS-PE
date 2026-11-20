@@ -1,0 +1,27 @@
+# planted RTL mutants of src/jspe_shift.v for formal/shift.sby (make mutate B=shift); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_shift.v
+tasks: [prove]
+depth: 8   # wsh_no_wrst: long word, shift, short word, then the check
+mutants:
+  - {name: mask_wide, old: "wire [15:0] mask = ~(16'hFFFE << wl);", new: "wire [15:0] mask = ~(16'hFFFC << wl);"}
+  - {name: lsb_nomask, old: "wire [14:0] smh  = s[15:1] & mask[15:1];", new: "wire [14:0] smh  = s[15:1];"}
+  - {name: out_fill0, old: "wire fbit   = do_in ? bin : 1'b1;", new: "wire fbit   = do_in ? bin : 1'b0;"}
+  - {name: out_with_shin, old: "wire do_out = is_e & ~ir[6] & (aa == ACTA_OUT);", new: "wire do_out = is_e & (aa == ACTA_OUT);"}
+  - {name: wend_wl0, old: "wire wend = (n == 4'd1) | (n0 & (wl == 4'd0));", new: "wire wend = (n == 4'd1);"}
+  - {name: xf_needs_hrx, old: "wire xf   = (apush | apull) & (~apush | htx) & (~apull | hrx);", new: "wire xf   = (apush | apull) & (~apush | htx) & hrx;"}
+  - {name: push_unblocked, old: "wire xf   = (apush | apull) & (~apush | htx) & (~apull | hrx);", new: "wire xf   = (apush | apull) & (~apull | hrx);"}
+  - {name: d_before_pull, old: "assign dact = do_in ? ((lsb ? sx[0] : sx[wl]) ^ inv) : dcur;", new: "assign dact = do_in ? ((lsb ? s_sh[0] : s_sh[wl]) ^ inv) : dcur;"}
+  - {name: par_norestart, old: "wire       par1 = (n0 ? podd : par) ^ tbit;", new: "wire       par1 = par ^ tbit;"}
+  - {name: run_reset0, old: "((tbit == b) ? inc7(runl) : 3'd1);", new: "((tbit == b) ? inc7(runl) : 3'd0);"}
+  - {name: stuff_no_tap, old: "        b    <= stuff ? ~b_s : b_s;", new: "        b    <= b_s;"}
+  - {name: q_old_par, old: "assign q = (alt == ALT_PAR) ? par_s", new: "assign q = (alt == ALT_PAR) ? par"}
+  - {name: smp_counts, old: "        par  <= par ^ bin;\n      end", new: "        par  <= par ^ bin;\n        n    <= n0 ? wl : n - 4'd1;\n      end"}
+  - {name: wsh_no_wrst, old: "if (x_wrst | x_wsh) begin", new: "if (x_wrst) begin"}
+  - {name: ld_no_alt, old: "if (aa[2]) ldq <= (aa == ACTA_Q) ? q : dact;", new: "if (aa[2]) ldq <= dact;"}
+  - {name: lf_always, old: "assign lf_step    = x_e & shf & lfen;", new: "assign lf_step    = x_e & shf;"}
+  - {name: lv_always, old: "if (ir[6]) lvq <= lin;", new: "lvq <= lin;"}
+  - {name: push_pulled, old: "assign apush_data = s_sh[7:0];", new: "assign apush_data = sx[7:0];"}
+  - {name: mis_lv, old: "assign mis  = lin ^ ldq;", new: "assign mis  = lvq ^ ldq;"}
+  - {name: inpin_bit, old: "wire lin    = lv[inpin];", new: "wire lin    = lv[{1'b0, inpin[0]}];"}
+  - {name: diff_ld, old: "wire bin    = lin ^ (diff & lvq) ^ inv;", new: "wire bin    = lin ^ (diff & ldq) ^ inv;"}

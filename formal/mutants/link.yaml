@@ -1,0 +1,40 @@
+# planted RTL mutants of src/jspe_link.v for formal/link.sby (make mutate B=link); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_link.v
+tasks: [bmc]
+depth: 20   # first WRMEM word completes about step 14 at a byte every other clock
+mutants:
+  - {name: exbad_no_xm, old: "wire       ex_bad   = do_exec && |(ex_oh & (e_runs | e_xm));", new: "wire       ex_bad   = do_exec && |(ex_oh & e_runs);"}
+  - {name: exbad_no_run, old: "wire       ex_bad   = do_exec && |(ex_oh & (e_runs | e_xm));", new: "wire       ex_bad   = do_exec && |(ex_oh & e_xm);"}
+  - {name: exec_unchk, old: "(do_exec && !ex_bad) ? 3'b110 : 3'b000;", new: "(do_exec) ? 3'b110 : 3'b000;"}
+  - {name: run_unmasked, old: "pm <= do_engop ? (m & ((op_hi == 4'h3 || op_hi == 4'h4) ? ~e_xm : 4'hF)) : ex_oh;", new: "pm <= do_engop ? m : ex_oh;"}
+  - {name: step_unmasked, old: "(m & ((op_hi == 4'h3 || op_hi == 4'h4) ? ~e_xm : 4'hF))", new: "(m & ((op_hi == 4'h3) ? ~e_xm : 4'hF))"}
+  - {name: two_kinds, old: "assign e_run     = {4{pk == 3'd3}} & pm;", new: "assign e_run     = {4{pk == 3'd3 || pk == 3'd4}} & pm;"}
+  - {name: exec_engine_b, old: "wire [3:0] ex_oh    = 4'b0001 << op[1:0];", new: "wire [3:0] ex_oh    = 4'b0001 << b[1:0];"}
+  - {name: no_literal, old: "wire data_byte = b_vld && (((p_st == P_DATA) && b != H_ESC) || ((p_st == P_OP) && b == H_ESC));", new: "wire data_byte = b_vld && ((p_st == P_DATA) && b != H_ESC);"}
+  - {name: esc_in_args, old: "P_ARGS: if (args_done) p_st_n = (op == H2C_WRMEM) ? P_WRD : P_DATA;", new: "P_ARGS: if (args_done || b == H_ESC) p_st_n = (op == H2C_WRMEM) ? P_WRD : P_DATA;"}
+  - {name: exec_3args, old: "need <= op_n2 ? 2'd2 : op_n3 ? 2'd3 : 2'd1;", new: "need <= op_n2 ? 2'd3 : op_n3 ? 2'd3 : 2'd1;"}
+  - {name: exec_0x64, old: "wire op_n2 = (b[7:2] == 6'b011000);", new: "wire op_n2 = (b[7:3] == 5'b01100);"}
+  - {name: brk_ignored, old: "if (rx_brk) p_st_n = P_DATA;", new: "if (1'b0) p_st_n = P_DATA;"}
+  - {name: sel_bits, old: "wire [1:0] sel_n = do_sel ? b[1:0] : sel;", new: "wire [1:0] sel_n = do_sel ? b[2:1] : sel;"}
+  - {name: ovf_inv, old: "assign rx_ovf    = rx_wr & rx_full;", new: "assign rx_ovf    = rx_wr & ~rx_full;"}
+  - {name: pad45_open, old: "(a0[3:1] != 3'b010)", new: "(a0[3:1] != 3'b011)"}
+  - {name: sm_no_xm, old: "wire       busy_any = |({e_stat[57], e_stat[41], e_stat[25], e_stat[9]} | e_xm);", new: "wire       busy_any = |({e_stat[57], e_stat[41], e_stat[25], e_stat[9]});"}
+  - {name: filt_order, old: "filt <= {b, a1};", new: "filt <= {a1, b};"}
+  - {name: xword_order, old: "assign exec_word = {b, a0};", new: "assign exec_word = {a0, b};"}
+  - {name: wrmem_count, old: "wr_left <= {1'b0, b} + 9'd1;", new: "wr_left <= {1'b0, b};"}
+  - {name: eclr_byte, old: "assign e_clr     = {8{do_wrreg && a0 == HREG_ECLR}} & a1;", new: "assign e_clr     = {8{do_wrreg && a0 == HREG_ECLR}} & b;"}
+  - {name: stop_masked, old: "pm <= do_engop ? (m & ((op_hi == 4'h3 || op_hi == 4'h4) ? ~e_xm : 4'hF)) : ex_oh;", new: "pm <= do_engop ? (m & ~e_xm) : ex_oh;"}
+  - {name: rdy_no_esc, old: "wire h_rdy_n = (p_st_n == P_DATA || p_st_n == P_OP) && sel_v_n &&", new: "wire h_rdy_n = (p_st_n == P_DATA) && sel_v_n &&"}
+  - {name: rdy_thresh, old: "((sel_n == 2'd0) ? rx_free[2:1] == 2'd0", new: "((sel_n == 2'd0) ? rx_free[2] == 1'b0"}
+  - {name: rdy_old_sel, old: "wire h_rdy_n = (p_st_n == P_DATA || p_st_n == P_OP) && sel_v_n &&", new: "wire h_rdy_n = (p_st_n == P_DATA || p_st_n == P_OP) && sel_v &&"}
+  - {name: b2_preempted, old: "      if (b2v) begin", new: "      if (b2v && !rp_new) begin"}
+  - {name: event_code, old: "if (ent[8]) b2_n = C2H_EVENT | {2'b00, ent[5:0]};", new: "if (ent[8]) b2_n = C2H_EVENT | {2'b00, ent[6:1]};"}
+  - {name: event_no_b2, old: "wire b2_set = take_nt | sw_st | (take_st & (ent[8] | ent[7:0] == H_ESC));", new: "wire b2_set = take_nt | sw_st | (take_st & (ent[7:0] == H_ESC));"}
+  - {name: txrd_extra, old: "assign tx_rd = {4{take_st}} & cur_oh;", new: "assign tx_rd = {4{take_st}} & (cur_oh | 4'b0001);"}
+  - {name: cur_skew, old: "        cur    <= nxt;", new: "        cur    <= nxt + 2'd1;"}
+  - {name: notice_code, old: "b2_n    = C2H_OVR | {4'd0, nt_code};", new: "b2_n    = C2H_OVR | {4'd0, nt_code} | 8'h10;"}
+  - {name: wr_not_held, old: "else if (h_gnt && h_we) wr_pend <= 1'b0;", new: "else wr_pend <= 1'b0;"}
+  - {name: wr_addr_skew, old: "      wr_paddr <= wr_addr;", new: "      wr_paddr <= wr_addr + 9'd1;"}
+  - {name: rd_dropped, old: "wire rd_req = !rp_have && !rd_fl && (rd_left != 9'd0);", new: "wire rd_req = !rp_have && !rd_fl && (rd_left != 9'd0) && !h_rx_s;"}
+  - {name: rp_hdr_twice, old: "rp_hdr  <= take_rp ? 2'd1 : 2'd2;", new: "rp_hdr  <= 2'd2;"}

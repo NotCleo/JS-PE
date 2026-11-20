@@ -1,0 +1,24 @@
+# planted RTL mutants of src/jspe_timer.v for formal/timer.sby (make mutate B=timer); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_timer.v
+tasks: [prove]
+depth: 20   # prescaler mutants need 16 running clocks for a trace
+mutants:
+  - {name: pre16_off, old: "(pre == TPRE_DIV16) ? (psc[3:0] == 4'hF)", new: "(pre == TPRE_DIV16) ? (psc[3:0] == 4'hE)"}
+  - {name: pre3_div256, old: "(pre == TPRE_DIV256) ? (psc == 8'hFF) : 1'b1;", new: "(pre[1]) ? (psc == 8'hFF) : 1'b1;"}
+  - {name: tock_noskip, old: "assign tock = cnt & (t == c);", new: "assign tock = trun & (t == c);"}
+  - {name: tick_skip, old: "wire cnt = trun & stp & ~skip;", new: "wire cnt = trun & stp;"}
+  - {name: win_le, old: "wire auto   = edge_s & (~swin | ~trun | (t < c));", new: "wire auto   = edge_s & (~swin | ~trun | (t <= c));"}
+  - {name: win_ignored, old: "wire auto   = edge_s & (~swin | ~trun | (t < c));", new: "wire auto   = edge_s;"}
+  - {name: edge_rise, old: "(sedge[0] & rise[spin]) | (sedge[1] & fall[spin])", new: "(sedge[0] & rise[spin]) | (sedge[1] & rise[spin])"}
+  - {name: tone_swin, old: "tone <= x_tset | (~x_tsync & swin);", new: "tone <= x_tset | swin;"}
+  - {name: start_keeps_fa, old: "        fa   <= 8'd0;\n        psc  <= 8'd0;\n        skip <= 1'b0;", new: "        psc  <= 8'd0;\n        skip <= 1'b0;"}
+  - {name: stop_wins, old: "wire start  = x_tsync | x_tset | auto;", new: "wire start  = x_tsync | x_tset | (auto & ~x_tstop);"}
+  - {name: oneshot_runs, old: "          else if (tone) trun <= 1'b0;", new: "          else if (tone & 1'b0) trun <= 1'b0;"}
+  - {name: no_carry, old: "            {skip, fa} <= fsum;", new: "            fa <= fsum[7:0];"}
+  - {name: cnt_on_skip, old: "          if (skip) skip <= 1'b0;\n          else if (!tz) t <= t - 16'd1;", new: "          if (skip) skip <= 1'b0;\n          if (!tz) t <= t - 16'd1;"}
+  - {name: psc_step2, old: "psc <= psc + 8'd1;", new: "psc <= psc + 8'd2;"}
+  - {name: auto_opb, old: "t    <= x_tset ? opb : p;", new: "t    <= x_tsync ? p : opb;"}
+  - {name: c_alias, old: "if (wr_en && wr_reg == REG_C) c <= wr_data;", new: "if (wr_en && wr_reg[2]) c <= wr_data;"}
+  - {name: tcfg_bits, old: "if (x_wcfg) tcfg <= opb[14:0];", new: "if (x_wcfg) tcfg <= {opb[13:0], opb[14]};"}
+  - {name: wcfg_creg, old: "ir[7:3] == CREG_TCFG", new: "ir[6:3] == CREG_TCFG[3:0]"}

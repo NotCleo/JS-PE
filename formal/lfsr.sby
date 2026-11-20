@@ -1,0 +1,25 @@
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 4
+cover: mode cover
+cover: depth 8
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_lfsr.v
+hierarchy -top jspe_lfsr
+proc
+expose jspe_lfsr/poly jspe_lfsr/right
+prep -top jspe_lfsr
+read -formal -sv fv_lfsr.v
+prep -top fv_lfsr
+
+[files]
+../src/jspe_lfsr.v
+fv_lfsr.v

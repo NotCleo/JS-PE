@@ -1,0 +1,31 @@
+# planted RTL mutants of src/jspe_epins.v for formal/epins.sby (make mutate B=epins); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_epins.v
+tasks: [prove]
+mutants:
+  - {name: const_swap, old: "{6'd0, 1'b1, 1'b0, sig, lvl}", new: "{6'd0, 1'b0, 1'b1, sig, lvl}"}
+  - {name: src26_one, old: "{6'd0, 1'b1, 1'b0, sig, lvl}", new: "{6'd1, 1'b1, 1'b0, sig, lvl}"}
+  - {name: no_inv, old: "assign lv[k]   = src[bnd[6*k+4:6*k]] ^ bnd[6*k+5];", new: "assign lv[k]   = src[bnd[6*k+4:6*k]];"}
+  - {name: sup_pair, old: "assign rise[k] = lv[k] & ~prev[k] & ~bsup[k/2];", new: "assign rise[k] = lv[k] & ~prev[k] & ~bsup[k%2];"}
+  - {name: fall_nosup, old: "assign fall[k] = ~lv[k] & prev[k] & ~bsup[k/2];", new: "assign fall[k] = ~lv[k] & prev[k];"}
+  - {name: rise_both, old: "assign rise[k] = lv[k] & ~prev[k] & ~bsup[k/2];", new: "assign rise[k] = (lv[k] ^ prev[k]) & ~bsup[k/2];"}
+  - {name: b23_alias, old: "wire x_b23  = x_wcfg && ir[7:3] == CREG_BIND23;", new: "wire x_b23  = x_wcfg && ir[6:3] == 4'd4;"}
+  - {name: b01_swap, old: "if (x_b01) bnd[11:0]  <= {opb[13:8], opb[5:0]};", new: "if (x_b01) bnd[11:0]  <= {opb[5:0], opb[13:8]};"}
+  - {name: bsup_swap, old: "bsup <= {x_b23, x_b01};", new: "bsup <= {x_b01, x_b23};"}
+  - {name: prev_clr, old: "      prev <= lv;", new: "      prev <= lv & {4{~x_e}};"}
+  - {name: no_follow, old: "val_c[i] = fol[i] ? dcur : val[i];", new: "val_c[i] = val[i];"}
+  - {name: fol_dact, old: "val_c[i] = fol[i] ? dcur : val[i];", new: "val_c[i] = fol[i] ? dact : val[i];"}
+  - {name: z_drives, old: "oe_c[i]  = (aa != ACTA_Z);", new: "oe_c[i]  = 1'b1;"}
+  - {name: f_on_q, old: "fol_n[i] = (aa == ACTA_F);", new: "fol_n[i] = (aa == ACTA_Q);"}
+  - {name: d_nodiff, old: "ACTA_D, ACTA_OUT: val_c[i] = diff ? (val[i] ^ dact) : dact;", new: "ACTA_D, ACTA_OUT: val_c[i] = dact;"}
+  - {name: z_follows, old: "ACTA_Z:           val_c[i] = val[i];", new: "ACTA_Z:           val_c[i] = fol[i] ? dcur : val[i];"}
+  - {name: q_dact, old: "ACTA_Q:           val_c[i] = q;", new: "ACTA_Q:           val_c[i] = dact;"}
+  - {name: t_keeps_fol, old: "        fol_n[i] = 1'b0;\n", new: ""}
+  - {name: b_pins23, old: "i[1] == 1'b0 && pb == i[0]", new: "pb == i[0]"}
+  - {name: t_of_next, old: "val_c[i] = (ab == ACTB_T) ? ~val[i] : ab[1];", new: "val_c[i] = (ab == ACTB_T) ? ~val_c[i] : ab[1];"}
+  - {name: e_dec, old: "wire x_e    = fire & ~ir[15];", new: "wire x_e    = fire & ~ir[15] & ~ir[14];"}
+  - {name: wcfg_mask, old: "(ir & I_WCFG_MASK) == I_WCFG_VAL", new: "(ir & 16'hFE00) == I_WCFG_VAL"}
+  - {name: val_rst, old: "val  <= 4'd0;", new: "val  <= 4'hF;"}
+  - {name: bnd_rst, old: "bnd <= 24'd0;", new: "bnd <= 24'd1;"}
+  - {name: prev_rst, old: "prev <= 4'd0;", new: "prev <= 4'hF;"}
+  - {name: bsup_rst, old: "bsup <= 2'd0;", new: "bsup <= 2'd3;"}

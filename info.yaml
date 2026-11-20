@@ -1,0 +1,70 @@
+# Tiny Tapeout project information
+project:
+  title:        "JS-PE Programmable Protocol Emulator"      # Project title
+  author:       "NotCleo"      # Your name
+  discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
+  description:  "Reprogrammable protocol emulator (UART/SPI/I2C and beyond)"      # One line description of what your project does
+  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
+  clock_hz:     50000000 # Clock frequency in Hz (or 0 if not applicable)
+
+  # How many tiles your design occupies? A single tile is about 202x155 uM.
+  tiles: "8x4"          # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2, 8x2, 3x4, 4x4, 5x4, 6x4 or 8x4
+
+  # Your top module name must start with "tt_um_". Make it unique by including your github username:
+  top_module:  "tt_um_notcleo_jspe"
+
+  # List your project's source files here.
+  # Source files must be in ./src and you must list each source file separately, one per line.
+  # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
+  source_files:
+    - "tt_um_notcleo_jspe.v"
+    - "jspe_pins.v"
+    - "jspe_link.v"
+    - "jspe_mem.v"
+    - "jspe_engine.v"
+    - "jspe_seq.v"
+    - "jspe_alu.v"
+    - "jspe_timer.v"
+    - "jspe_shift.v"
+    - "jspe_epins.v"
+    - "jspe_arb.v"
+    - "jspe_fifo.v"
+    - "jspe_sig.v"
+    - "jspe_lfsr.v"
+    - "RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v"
+
+# The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
+# This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
+pinout:
+  # Inputs
+  ui[0]: "GPI0"
+  ui[1]: "GPI1"
+  ui[2]: "GPI2 / UART CTS"
+  ui[3]: "H_RX (host link)"
+  ui[4]: "GPI4 / Manchester RX"
+  ui[5]: "GPI5"
+  ui[6]: "GPI6"
+  ui[7]: "GPI7 / UART RXD"
+
+  # Outputs
+  uo[0]: "GPO0 / UART TXD"
+  uo[1]: "GPO1 / UART RTS"
+  uo[2]: "GPO2 / WS2812"
+  uo[3]: "GPO3 / Manchester TX"
+  uo[4]: "H_TX (host link)"
+  uo[5]: "H_RDY (host link, active low)"
+  uo[6]: "GPO6"
+  uo[7]: "GPO7"
+
+  # Bidirectional pins
+  uio[0]: "IO0 / SPI CS"
+  uio[1]: "IO1 / SPI MOSI"
+  uio[2]: "IO2 / SPI MISO"
+  uio[3]: "IO3 / SPI SCK"
+  uio[4]: "IO4"
+  uio[5]: "IO5 / I2C SDA"
+  uio[6]: "IO6 / I2C SCL"
+  uio[7]: "IO7"
+
+# Do not change!
+yaml_version: 6

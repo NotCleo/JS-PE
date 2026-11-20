@@ -1,0 +1,26 @@
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 4
+cover: mode cover
+cover: depth 12
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_shift.v
+hierarchy -top jspe_shift
+proc
+expose jspe_shift/shcfg jspe_shift/tapcfg jspe_shift/n jspe_shift/runl jspe_shift/lvq jspe_shift/ldq
+prep -top jspe_shift
+read -formal -sv fv_shift.v
+prep -top fv_shift
+
+[files]
+../src/jspe_shift.v
+../src/jspe_isa.vh
+fv_shift.v

@@ -1,0 +1,25 @@
+# planted RTL mutants of src/jspe_pins.v for formal/pins.sby (make mutate B=pins); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_pins.v
+tasks: [prove]
+mutants:
+  - {name: od_high, old: "assign uio_d[j] = c[P_EN] & ~c[P_OD] & v;", new: "assign uio_d[j] = c[P_EN] & v;"}
+  - {name: oe_no_en, old: "assign oe_d[j]  = c[P_EN] & o & ~(c[P_OD] & v);", new: "assign oe_d[j]  = o & ~(c[P_OD] & v);"}
+  - {name: od_rel_inv, old: "assign oe_d[j]  = c[P_EN] & o & ~(c[P_OD] & v);", new: "assign oe_d[j]  = c[P_EN] & o & ~(c[P_OD] & ~v);"}
+  - {name: own_eng, old: "wire v = e_val[c[3:0]] ^ c[P_INV];", new: "wire v = e_val[c[3:0] ^ 4'd4] ^ c[P_INV];"}
+  - {name: own_or, old: "wire o = e_oe[c[3:0]];", new: "wire o = e_oe[c[3:0]] | e_oe[0];"}
+  - {name: uio_noinv, old: "wire v = e_val[c[3:0]] ^ c[P_INV];", new: "wire v = e_val[c[3:0]];"}
+  - {name: uo_noen, old: "assign uo_d[j] = en & (e_val[c[3:0]] ^ c[P_INV]);", new: "assign uo_d[j] = e_val[c[3:0]] ^ c[P_INV];"}
+  - {name: idx_alias, old: "else if (pad_we && pad_idx == (j + 8)) c <= pad_wdata;", new: "else if (pad_we && pad_idx[2:0] == j) c <= pad_wdata;"}
+  - {name: en_rst1, old: "            en <= 1'b0;", new: "            en <= 1'b1;"}
+  - {name: link_swap, old: "assign uo_d[j] = (j == 4) ? h_tx : h_rdy;", new: "assign uo_d[j] = (j == 4) ? h_rdy : h_tx;"}
+  - {name: uo_rst0, old: "uo_out  <= 8'h10;", new: "uo_out  <= 8'h00;"}
+  - {name: filt2, old: "wire [15:0] eq   = ~(s2 ^ h1) & ~(s2 ^ h2);", new: "wire [15:0] eq   = ~(s2 ^ h1);"}
+  - {name: held_rst1, old: "if (!rst_n) held <= 16'h0000;", new: "if (!rst_n) held <= 16'hFFFF;"}
+  - {name: held_gated, old: "else        held <= fout;", new: "else        held <= (fout & filt) | (held & ~filt);"}
+  - {name: raw_s1, old: "assign lvl_raw = s2;", new: "assign lvl_raw = s1;"}
+  - {name: filt_sel, old: "assign lvl     = (s2 & ~filt) | (fout & filt);", new: "assign lvl     = (s2 & filt) | (fout & ~filt);"}
+  - {name: wdata_inv, old: "            c  <= pad_wdata[4:0];", new: "            c  <= {~pad_wdata[4], pad_wdata[3:0]};"}
+  - {name: uio_rst_oe, old: "uio_oe  <= 8'h00;", new: "uio_oe  <= 8'hFF;"}
+  - {name: no_filter, old: "wire [15:0] fout = (s2 & eq) | (held & ~eq);", new: "wire [15:0] fout = (s2 & eq) | (s2 & ~eq);"}
+  - {name: en_wr_od, old: "            en <= pad_wdata[P_EN];", new: "            en <= pad_wdata[P_OD];"}

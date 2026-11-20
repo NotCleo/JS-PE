@@ -1,0 +1,60 @@
+[tasks]
+fetch fetch_g
+fetch_cover fetch_g
+evt evt_g
+evt_cover evt_g
+wch wch_g
+wch_cover wch_g
+dec dec_g
+dec_cover dec_g
+
+[options]
+fetch: mode prove
+fetch: depth 12
+fetch_cover: mode cover
+fetch_cover: depth 16
+evt: mode prove
+evt: depth 6
+evt_cover: mode cover
+evt_cover: depth 12
+wch: mode prove
+wch: depth 12
+wch_cover: mode cover
+wch_cover: depth 14
+dec: mode prove
+dec: depth 4
+dec_cover: mode cover
+dec_cover: depth 10
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_seq.v
+hierarchy -top jspe_seq
+proc
+expose jspe_seq/irv jspe_seq/pfv jspe_seq/hrv jspe_seq/fl_v jspe_seq/fl_ld jspe_seq/mo_v jspe_seq/redir jspe_seq/target jspe_seq/arr_ir jspe_seq/fp jspe_seq/hr jspe_seq/pf jspe_seq/arr_pf jspe_seq/f jspe_seq/d jspe_seq/wf jspe_seq/wabort jspe_seq/undef jspe_seq/cv0 jspe_seq/cv1 jspe_seq/wen jspe_seq/wprev jspe_seq/cc0 jspe_seq/cc1 jspe_seq/wv0 jspe_seq/wv1 jspe_seq/stepm jspe_seq/adv jspe_seq/fold jspe_seq/f_e jspe_seq/f_jp jspe_seq/f_jf jspe_seq/f_gm jspe_seq/f_rx jspe_seq/is_mem jspe_seq/is_st jspe_seq/is_jmpa jspe_seq/is_call jspe_seq/is_wcfg jspe_seq/is_ret jspe_seq/is_halt jspe_seq/is_ovclr jspe_seq/is_watch jspe_seq/is_txw jspe_seq/is_pull
+prep -top jspe_seq
+fetch_g: read -formal -sv fv_seq_fetch.v
+fetch_g: prep -top fv_seq_fetch
+evt: read -formal -sv fv_seq_evt.v
+evt_cover: read -formal -sv -DLINK_ENV fv_seq_evt.v
+evt_g: prep -top fv_seq_evt
+wch: read -formal -sv fv_seq_wch.v
+wch_cover: read -formal -sv -DLINK_ENV fv_seq_wch.v
+wch_g: prep -top fv_seq_wch
+dec: read -formal -sv fv_seq_dec.v
+dec_cover: read -formal -sv -DLINK_ENV fv_seq_dec.v
+dec_g: prep -top fv_seq_dec
+
+[files]
+../src/jspe_seq.v
+../src/jspe_isa.vh
+fv_seq_dut.vh
+fv_seq_fetch.v
+fv_seq_evt.v
+fv_seq_wch.v
+fv_gap.vh
+fv_link_env.vh
+fv_seq_dec.v
+jspe_fv_isa.vh

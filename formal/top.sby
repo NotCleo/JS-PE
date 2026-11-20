@@ -1,0 +1,67 @@
+[tasks]
+prove abs
+cover abs
+idle full
+idle_cover full
+
+[options]
+prove: mode prove
+prove: depth 6
+cover: mode cover
+cover: depth 10
+idle: mode bmc
+idle: depth 40
+idle_cover: mode cover
+idle_cover: depth 10
+# idle reason: whole chip minus the memory from an arbitrary state, 3-clock reset, then the host silent
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal tt_um_notcleo_jspe.v jspe_pins.v jspe_link.v jspe_mem.v RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v jspe_engine.v jspe_seq.v jspe_alu.v jspe_timer.v jspe_shift.v jspe_epins.v jspe_arb.v jspe_fifo.v jspe_sig.v jspe_lfsr.v
+hierarchy -top tt_um_notcleo_jspe
+proc
+abs: cutpoint tt_um_notcleo_jspe/c:u_link tt_um_notcleo_jspe/c:u_mem tt_um_notcleo_jspe/c:u_arb tt_um_notcleo_jspe/c:u_sig tt_um_notcleo_jspe/c:u_lfsr tt_um_notcleo_jspe/c:*u_eng tt_um_notcleo_jspe/c:*u_rx tt_um_notcleo_jspe/c:*u_tx
+full: cutpoint tt_um_notcleo_jspe/c:u_mem
+flatten
+cd tt_um_notcleo_jspe
+rename \u_pins.g_uo[0].g_pad.en fv_ue0
+rename \u_pins.g_uo[1].g_pad.en fv_ue1
+rename \u_pins.g_uo[2].g_pad.en fv_ue2
+rename \u_pins.g_uo[3].g_pad.en fv_ue3
+rename \u_pins.g_uo[6].g_pad.en fv_ue6
+rename \u_pins.g_uo[7].g_pad.en fv_ue7
+rename \u_pins.g_uio[0].c fv_ic0
+rename \u_pins.g_uio[1].c fv_ic1
+rename \u_pins.g_uio[2].c fv_ic2
+rename \u_pins.g_uio[3].c fv_ic3
+rename \u_pins.g_uio[4].c fv_ic4
+rename \u_pins.g_uio[5].c fv_ic5
+rename \u_pins.g_uio[6].c fv_ic6
+rename \u_pins.g_uio[7].c fv_ic7
+cd ..
+expose tt_um_notcleo_jspe/rst_i tt_um_notcleo_jspe/pad_we tt_um_notcleo_jspe/pad_idx tt_um_notcleo_jspe/pad_wdata tt_um_notcleo_jspe/fv_*
+prep -top tt_um_notcleo_jspe
+abs: read -formal -sv fv_top.v
+full: read -formal -sv -DTOP_IDLE fv_top.v
+prep -top fv_top
+
+[files]
+../src/tt_um_notcleo_jspe.v
+../src/jspe_pins.v
+../src/jspe_link.v
+../src/jspe_mem.v
+../src/RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v
+../src/jspe_engine.v
+../src/jspe_seq.v
+../src/jspe_alu.v
+../src/jspe_timer.v
+../src/jspe_shift.v
+../src/jspe_epins.v
+../src/jspe_arb.v
+../src/jspe_fifo.v
+../src/jspe_sig.v
+../src/jspe_lfsr.v
+../src/jspe_isa.vh
+fv_top.v

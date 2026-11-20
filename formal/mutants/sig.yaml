@@ -1,0 +1,13 @@
+# planted RTL mutants of src/jspe_sig.v for formal/sig.sby (make mutate B=sig); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_sig.v
+tasks: [prove]
+mutants:
+  - {name: set_wins, old: "else sig <= (sig | s) & ~c;", new: "else sig <= (sig & ~c) | s;"}
+  - {name: set_no_e3, old: "wire [7:0] s = e_set[7:0] | e_set[15:8] | e_set[23:16] | e_set[31:24];", new: "wire [7:0] s = e_set[7:0] | e_set[15:8] | e_set[23:16];"}
+  - {name: clr_no_e1, old: "wire [7:0] c = e_clr[7:0] | e_clr[15:8] | e_clr[23:16] | e_clr[31:24];", new: "wire [7:0] c = e_clr[7:0] | e_clr[23:16] | e_clr[31:24];"}
+  - {name: host_merges, old: "else if (sig_we) sig <= sig_wdata;", new: "else if (sig_we) sig <= sig_wdata | s;"}
+  - {name: engine_wins, old: "else if (sig_we) sig <= sig_wdata;", new: "else if (sig_we && (s | c) == 8'h00) sig <= sig_wdata;"}
+  - {name: reset_ff, old: "if (!rst_n) sig <= 8'h00;", new: "if (!rst_n) sig <= 8'hFF;"}
+  - {name: toggle, old: "else sig <= (sig | s) & ~c;", new: "else sig <= (sig ^ s) & ~c;"}
+  - {name: e0_rotated, old: "wire [7:0] s = e_set[7:0] |", new: "wire [7:0] s = {e_set[0], e_set[7:1]} |"}

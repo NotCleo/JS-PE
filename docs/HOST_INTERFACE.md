@@ -1,0 +1,106 @@
+# Host interface
+
+How the RP2350 on the Tiny Tapeout demo board talks to the chip. Normative text: [docs/spec/HOSTIF.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/HOSTIF.md) (framing, commands, registers, errors) and [docs/spec/PINS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/PINS.md) section 2 (pins, clocking). Host code: [host/jspe.py](https://github.com/NotCleo/JS-PE/blob/main/host/jspe.py) and [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples). `host/jspe.py` has not run on a board (no board results yet) and is not executed by the test suite; [test/test_uart.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_uart.py) replays the same load sequence (CLK check, read-back in short `RDMEM`s) against the RTL, and the ISS's `play_bin` replays `.bin` images through the link model.
+
+## 1. Physical layer
+
+| Item | Value |
+|---|---|
+| Pins | H_RX = `ui_in[3]` (RP2350 GPIO20, UART1 TX), H_TX = `uo_out[4]` (GPIO37, UART1 RX), H_RDY = `uo_out[5]` (GPIO38, UART1 CTS, **0 = ready**) |
+| Byte | 8N1, LSB first, idle high |
+| Bit time | 16 clk after reset; 8 or 4 clk via register LINK. At 50 MHz: 3.125 / 6.25 / 12.5 Mbaud |
+| Clocking | `clk` and the host baud rate come from one clock, so the ratio is exact. The host examples drive clk = 48 MHz because the RP2350 UART clock stays at 48 MHz under the TT firmware, giving 3 Mbaud at 16 clk per bit (PINS.md 2) |
+| Flow control | H_RDY toward the host (a hardware CTS input stops within one byte); none toward the chip's transmitter, so the host buffers H_TX (≥ 4 KB ring recommended) |
+
+## 2. Framing
+
+`ESC` = 0x1B in both directions; any other byte is stream data. After `ESC` comes one operation byte and its fixed number of raw argument bytes. Host → chip data goes to the RX FIFO of the engine chosen with `SEL`; chip → host data comes from the TX FIFO of the current stream, and the chip announces every stream change.
+
+## 3. Commands (host → chip, byte after ESC)
+
+| Op | Name | Arguments | Effect | Reply |
+|---|---|---|---|---|
+| 0x1B | literal | — | data byte 0x1B | — |
+| 0x00–0x03 | `SEL e` | — | select engine e for data | — |
+| 0x20\|m | `STOP m` | — | stop engines in mask m | — |
+| 0x30\|m | `RUN m` | — | start engines in m in the same clock | — |
+| 0x40\|m | `STEP m` | — | one instruction, then stop | — |
+| 0x50\|m | `RST m` | — | engine reset + flush its FIFOs | — |
+| 0x60\|e | `EXEC e` | word lo, hi | inject one instruction into stopped engine e | — |
+| 0x70 | `WRMEM` | addr lo, hi, n−1, n words | write 1–256 words | — |
+| 0x71 | `RDMEM` | addr lo, hi, n−1 | read n words | `ESC 0xC1` + 2n bytes |
+| 0x72 | `WRREG` | reg, lo, hi | write a host register | — |
+| 0x73 | `RDREG` | reg | read a host register | `ESC 0xC3` lo hi |
+| 0x74 | `SYNC` | — | none | `ESC 0xC4` + ID (0x4A10) |
+
+## 4. Chip → host escapes
+
+| Code | Meaning |
+|---|---|
+| 0x1B | literal data 0x1B |
+| 0x00–0x03 | following data and events belong to engine e |
+| 0x40\|c | event c (0–63) from `evt #c`, in stream order |
+| 0x80\|e, 0x84\|e, 0x88\|e | engine e: overrun set / halted / trapped |
+| 0x8C | link error (framing, break, unknown op, data with no stream, refused command, lost memory write) |
+| 0xC1, 0xC3, 0xC4 | replies to `RDMEM`, `RDREG`, `SYNC` |
+
+Scheduling: reply in progress, then notices, then engine streams (a stream is served until empty, or 4 entries when another engine has data waiting). Escape sequences are never interleaved — proven for any host behaviour in [formal/RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md) (link, a_esc).
+
+## 5. Host registers
+
+| Addr | Name | Access | Contents |
+|---|---|---|---|
+| 0x00 | ID | R | 0x4A10 |
+| 0x01 | LINK | RW | bit time 16 / 8 / 4 clk |
+| 0x02 | SLOTMAP | RW | memory slot owners, reset 0xE4; accepted only with all engines stopped |
+| 0x03 | SIG | RW | signal flags G7–G0 |
+| 0x04 | FILT | W | input filter enables (16 inputs) |
+| 0x05 | PINS | R | synchronized input levels |
+| 0x06 | ECLR | W | clear overrun / halt-trap flags |
+| 0x08–0x0B | EST0–3 | R | engine status: PC, running, waiting, overrun, trap, halted, RX/TX FIFO not empty |
+| 0x10–0x1F | PAD_UO0–7, PAD_UIO0–7 | W | pad configuration: logical pin, engine, invert, open-drain, enable |
+
+Engine registers are not host registers; the host reads them by `EXEC`-ing `push R0` and reading the stream.
+
+## 6. Load image and procedure
+
+The assembler writes a `.bin` image: header `"JSPE"`, version 1, record count, then records the host replays in order:
+
+| Record | Host action |
+|---|---|
+| 0x06 CLK | stop if the host does not drive `clk` at the image's clk_hz (D089) |
+| 0x05 RST | `STOP` + `RST` the image's engines |
+| 0x02 REG | `WRREG` (SLOTMAP, FILT, PAD with `en` = 0, later PAD with `en` = 1) |
+| 0x01 MEM | `WRMEM` in ≤ 256-word chunks, then `RDMEM` read-back and compare |
+| 0x03 EXEC | `EXEC` initialisation instructions, then `jmp entry` |
+| 0x04 RUN | `RUN` mask |
+
+Pads are enabled only after initialisation, so no pad drives a wrong level while the program is being set up. While other engines keep running, the read-back uses short `RDMEM`s (4 / 11 / 23 words at 16 / 8 / 4 clk per bit) so that their streams never wait more than 2 000 clk behind a reply (D088). Program load: 1 KB in ≈ 3.3 ms at 16 clk per bit (HOSTIF 8; the 128-word memory is 256 bytes).
+
+## 7. Bandwidth
+
+| Item | Value (HOSTIF 8) |
+|---|---|
+| Raw rate per direction at 50 MHz | 312.5 / 625 / 1250 KB/s at 16 / 8 / 4 clk per bit |
+| Overhead | 1 link byte per data byte (2 for 0x1B); stream change +2; event 2 bytes |
+| Host → FIFO latency | 9.5 B + 3 clk after the start bit (155 / 79 / 41 clk) |
+| FIFOs | 4 bytes each way per engine; H_RDY keeps 2 entries in reserve, so no host byte is lost |
+
+## 8. Host SDK (`host/jspe.py`)
+
+| Call | Does |
+|---|---|
+| `Link(uart_id, clk_hz, B=16, **uart_kw)` | open the link UART (pass `flow=UART.CTS`, `cts=Pin(38)`, a large `rxbuf`) |
+| `sync()` | `SYNC`, check ID 0x4A10 |
+| `rdreg(r)`, `wrreg(r, v)` | host registers |
+| `rdmem(a, n)`, `wrmem(a, words)` | memory |
+| `load(path)` | replay a `.bin` (CLK check, RST, REG, MEM + read-back, EXEC, RUN) |
+| `send(e, data)` | `SEL e` twice (H_RDY then shows stream e), then data with 0x1B escaped |
+| `recv(e)` | stream bytes received from engine e so far |
+| `poll()` | parse incoming bytes into per-engine streams, `events` (engine, code, position) and `notes` |
+
+Each example in [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples) enables the project with the TT SDK (`tt.shuttle.tt_um_notcleo_jspe.enable()`), drives `clk` with `tt.clock_project_PWM(48_000_000)`, holds reset while the link UART comes up, then `sync()`, `load()` and streams data. The RP2350 itself is the bus partner (PIO UART/SPI, `SoftI2C`, GPIO capture), so no external device is needed (D008).
+
+## 9. Errors and recovery
+
+Every error is reported, nothing hangs the link: framing errors, breaks, unknown ops, data with no stream selected and refused commands give `ESC 0x8C`; a byte for a full RX FIFO sets that engine's OVR (`ESC 0x80|e`). Recovery from any host-side confusion: a break (H_RX low ≥ 11 bit times), then `SYNC`. After reset or deselect all state is lost and the host reloads (HOSTIF 6, 9).

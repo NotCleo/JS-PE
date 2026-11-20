@@ -1,0 +1,11 @@
+# planted RTL mutants of src/tt_um_notcleo_jspe.v for formal/top.sby (make mutate B=top); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: tt_um_notcleo_jspe.v
+tasks: [prove]
+mutants:
+  - {name: sync_short, old: "wire rst_i = rst_s[1];", new: "wire rst_i = rst_s[0];"}
+  - {name: pins_unsync, old: "  jspe_pins u_pins (\n      .clk      (clk),\n      .rst_n    (rst_i),", new: "  jspe_pins u_pins (\n      .clk      (clk),\n      .rst_n    (rst_n),"}
+  - {name: pins_we_1, old: "      .pad_we   (pad_we),\n      .pad_idx  (pad_idx),\n      .pad_wdata(pad_wdata),\n      .h_tx", new: "      .pad_we   (1'b1),\n      .pad_idx  (pad_idx),\n      .pad_wdata(pad_wdata),\n      .h_tx"}
+  - {name: pins_oe_inv, old: "      .uio_oe   (uio_oe)\n  );", new: "      .uio_oe   (uio_oe_n)\n  );\n  wire [7:0] uio_oe_n;\n  assign uio_oe = ~uio_oe_n;"}
+  - {name: eng_no_rst, task: idle, depth: 14, old: "wire [3:0]  eng_rst = {4{~rst_i}} | l_rst;", new: "wire [3:0]  eng_rst = l_rst;"}
+  - {name: link_no_rst, task: idle, depth: 14, old: "  jspe_link u_link (\n      .clk      (clk),\n      .rst_n    (rst_i),", new: "  jspe_link u_link (\n      .clk      (clk),\n      .rst_n    (1'b1),"}

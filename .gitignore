@@ -1,0 +1,26 @@
+.DS_Store
+.idea
+*.vcd
+*.fst
+*.fst.hier
+runs
+tt_submission
+src/user_config.json
+src/config_merged.json
+test/sim_build
+test/__pycache__/
+test/results.xml
+test/gate_level_netlist.v
+
+# --- PE additions ---
+docs/inputs/
+build/
+test/last*.log
+test/unit/last*.log
+test/unit/results_*.xml
+test/unit/sim_build/
+.venv/
+__pycache__/
+test/results_*.xml
+.claude/settings.local.json
+.pytest_cache/

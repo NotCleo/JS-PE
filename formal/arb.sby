@@ -1,0 +1,26 @@
+[tasks]
+prove
+cover
+
+[options]
+prove: mode prove
+prove: depth 8
+cover: mode cover
+cover: depth 12
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal jspe_arb.v
+hierarchy -top jspe_arb
+proc
+expose jspe_arb/slot
+prep -top jspe_arb
+read -formal -sv fv_arb.v
+prep -top fv_arb
+
+[files]
+../src/jspe_arb.v
+fv_arb.v
+fv_gap.vh

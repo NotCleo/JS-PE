@@ -1,0 +1,16 @@
+# planted RTL mutants of src/jspe_lfsr.v for formal/lfsr.sby (make mutate B=lfsr); old = exact text, must occur once;
+# per mutant optional: task/tasks, depth, edits (several old/new pairs), equivalent (why it survives)
+rtl: jspe_lfsr.v
+tasks: [prove]
+mutants:
+  - {name: highest_wins, old: "wire [3:0] wsel = e_we & {~|e_we[2:0], ~|e_we[1:0], ~e_we[0], 1'b1};", new: "wire [3:0] wsel = e_we & {1'b1, ~e_we[3], ~|e_we[3:2], ~|e_we[3:1]};"}
+  - {name: sbit_or, old: "wire sbit = |(ssel & e_bit);", new: "wire sbit = |(e_step & e_bit);"}
+  - {name: step_unblocked, old: "wire step = |e_step & ~we;", new: "wire step = |e_step;"}
+  - {name: fb_end, old: "(right ? lfsr[0] : lfsr[31])", new: "(right ? lfsr[31] : lfsr[0])"}
+  - {name: right_rotate, old: "({32{sr}} & {1'b0, lfsr[31:1]})", new: "({32{sr}} & {lfsr[0], lfsr[31:1]})"}
+  - {name: poly_on_step, old: "wire [31:0] nx = sh ^ ({32{fb}} & poly);", new: "wire [31:0] nx = sh ^ ({32{step}} & poly);"}
+  - {name: poly_lo_hi, old: "if (w_p[0]) poly[15:0] <= wd;", new: "if (w_p[0]) poly[31:16] <= wd;"}
+  - {name: lfcfg_alias, old: "wire       w_c = idx[2] & ~idx[1] & ~idx[0];", new: "wire       w_c = idx[2];"}
+  - {name: right_rst1, old: "if (!rst_n) right <= 1'b0;", new: "if (!rst_n) right <= 1'b1;"}
+  - {name: lo_no_we, old: "wire [1:0] w_l = {2{we & ~idx[2] & ~idx[1]}} & {idx[0], ~idx[0]};", new: "wire [1:0] w_l = {2{~idx[2] & ~idx[1]}} & {idx[0], ~idx[0]};"}
+  - {name: left_always, old: "wire sl = step & ~right;", new: "wire sl = step;"}
