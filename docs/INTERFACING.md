@@ -41,7 +41,7 @@ The RP2350 on the demo board can stand in for every supported partner (PIO UART/
 
 ```mermaid
 flowchart LR
-  subgraph JSPE[JS-PE]
+  subgraph JSPE[Cleo]
     E0[E0 uart_tx.s] --> TXD[uo_out 0]
     RXD[ui_in 7] --> E1[E1 uart_rx.s]
     E1 --> RTS[uo_out 1]
@@ -57,7 +57,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  subgraph JSPE[JS-PE, spi_ctrl.s or spi_tgt.s on E0]
+  subgraph JSPE[Cleo, spi_ctrl.s or spi_tgt.s on E0]
     SCK[uio 3 SCK]
     CS[uio 0 CS]
     MOSI[uio 1 MOSI]
@@ -77,7 +77,7 @@ As controller the chip drives SCK, CS, MOSI; as target it drives MISO only while
 flowchart LR
   V[3.3 V] --- R1[4.7 kΩ] --- SCL
   V --- R2[4.7 kΩ] --- SDA
-  subgraph JSPE[JS-PE, i2c_ctrl.s or i2c_tgt.s on E0]
+  subgraph JSPE[Cleo, i2c_ctrl.s or i2c_tgt.s on E0]
     SCL[uio 6 SCL od]
     SDA[uio 5 SDA od]
   end
@@ -105,7 +105,7 @@ flowchart LR
 ```mermaid
 flowchart LR
   V[3.3 V] --- R[pull-up] --- BUS((wired-AND bus))
-  subgraph JSPE[JS-PE, can.s]
+  subgraph JSPE[Cleo, can.s]
     ETX[E_TX owns pad] --> PAD[uio 4 od]
     PAD --> ERX[E_RX reads pad]
   end

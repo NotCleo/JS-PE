@@ -1,4 +1,4 @@
-# REQUIREMENTS — JS-PE programmable protocol emulator
+# REQUIREMENTS — Cleo programmable protocol emulator
 
 Sources: Jane Street brief (2026-11-09), TT IHP template, checklist. MUST = v1 blocker; SHOULD = v1 goal; STRETCH = later.
 

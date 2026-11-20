@@ -1,589 +1,256 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# JS-PE: a programmable protocol emulator ASIC
+# Cleo: a programmable protocol emulator ASIC
 
-- My entry to the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/): a Tiny Tapeout chip on IHP 130 nm (SG13 CMOS5L), 8x4 tiles, that runs serial protocols as programs.
-- Four small engines each hold one instruction `guard : operation` and fire it in the clock its event arrives, so a pin edge becomes a pin change in 3–4 clocks with no fetch in between. Nothing protocol-specific is in hardware.
-- UART, SPI and I2C were the brief. WS2812, Manchester and CAN 2.0A were brought up later on the frozen RTL with no RTL change; CAN was written after the freeze. All results so far are from simulation; there is no silicon or board run yet.
+Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/): a Tiny Tapeout chip on IHP 130 nm that runs serial protocols as small programs instead of fixed hardware.
 
-----
+- Four small engines each hold one instruction, `guard : operation`, and fire it in the clock its event arrives, so a pin edge becomes a pin change in 3–4 clocks.
+- Nothing protocol-specific is built in. UART, SPI and I2C were the brief; WS2812, Manchester and CAN 2.0A were added later with no RTL change.
+- Everything is verified in simulation, at RTL and at gate level. Nothing has run on silicon or a board yet.
 
-## 2. Results at a glance
-
-| Item | Result | Source |
-|---|---|---|
-| Process, size | IHP SG13 CMOS5L via the Tiny Tapeout IHP template, 8x4 tiles, top `tt_um_notcleo_jspe` | [info.yaml](https://github.com/NotCleo/JS-PE/blob/main/info.yaml) |
-| Architecture | 4 engines, 128 x 16 shared program memory (flops), 67-instruction ISA, 3-pin host link | [docs/ARCHITECTURE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ARCHITECTURE.md) |
-| Protocols running | 9 programs: UART TX/RX, SPI controller/target, I2C controller/target (designed in); WS2812, Manchester TX/RX, CAN 2.0A (not designed in) | [docs/CAPABILITY.md](https://github.com/NotCleo/JS-PE/blob/main/docs/CAPABILITY.md) |
-| Fastest rates (simulated) | UART TX 4.5 Mbaud (bound), SPI controller 6.25 MHz (RTL), SPI target 4.44 MHz (RTL), I2C controller 0.83 MHz Fm+ (RTL), CAN 500 kbit/s (RTL) | program headers, [docs/CAPABILITY.md](https://github.com/NotCleo/JS-PE/blob/main/docs/CAPABILITY.md) |
-| Reaction floor | pad edge → pad change in 3–4 clk + pad (70–90 ns at 50 MHz) | ARCH 4.1, D081 |
-| Clock | 50 MHz; worst setup slack 1.183 ns (slow corner); ≈ 53 MHz slow corner (estimate from 1.183 ns slack) | GDS run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065) |
-| Area | 692 464 µm² placed = 57.3 % of the core (limit 60 %) | same run, PROGRESS ledger |
-| Physical sign-off | DRC, LVS, antenna, TT precheck pass; hold met in all corners | same run |
-| Tests | 45/45 system tests at RTL and 45/45 at gate level; 350 ISS/toolchain tests; 56 block tests | [docs/VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) |
-| Formal | 149 properties proven by k-induction in 11 blocks; 213 RTL mutants, 211 caught, 2 equivalent | [formal/RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md) |
-| Hardware | not tested on a board or silicon yet | — |
-| How | 7 days (2026-11-14 to 11-20), 204 commits, built with Claude Code (Fable 5.2, Opus 5.5) | [docs/AI_USAGE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md) |
+**Contents:** [At a glance](#1-at-a-glance) · [The challenge](#2-the-challenge) · [How it works](#3-how-it-works) · [Quick start](#4-quick-start) · [Protocols](#5-protocols) · [On the demo board](#6-on-the-demo-board) · [Pins and wiring](#7-pins-and-wiring) · [Verification and sign-off](#8-verification-and-sign-off) · [Limits](#9-limits) · [How it was built](#10-how-it-was-built) · [Repository map](#11-repository-map) · [Future work](#12-future-work) · [Acknowledgements and licence](#13-acknowledgements-and-licence)
 
 ----
 
-## 3. Contents
+## 1. At a glance
 
-**Start here.**
-
-| # | Section | What it covers |
-|---|---|---|
-| 4 | [The challenge](#4-the-challenge) | What Jane Street asked for, and the constraints |
-| 5 | [Timeline](#5-timeline) | Seven days, phase by phase, from the git log |
-| 6 | [How I started](#6-how-i-started) | Inputs, files as memory |
-| 7 | [What I built](#7-what-i-built) | The chip in one picture and one paragraph |
-| 8 | [Quick start](#8-quick-start) | Copy-paste commands: tests, assembler, board |
-
-**The chip.**
-
-| # | Section | What it covers |
-|---|---|---|
-| 9 | [Sign-off](#9-sign-off) | GDS run, precheck, DRC, LVS, STA per corner, IR drop, gate level, area |
-| 10 | [Pinout](#10-pinout) | Host pins, per-demo pads, which pins can be open-drain |
-| 11 | [Architecture overview](#11-architecture-overview) | Engines, memory slots, events, the reaction floor |
-| 12 | [Modules](#12-modules) | Every RTL module with area, formal status and tests |
-| 13 | [Instruction set](#13-instruction-set) | Formats and instruction groups |
-| 14 | [Design rationale](#14-design-rationale) | Ten decisions and what I rejected |
-
-**Using it.**
-
-| # | Section | What it covers |
-|---|---|---|
-| 15 | [Software](#15-software) | Assembler, ISS, generator, host SDK, make targets |
-| 16 | [Protocols](#16-protocols) | What runs, how fast, and where each rate comes from |
-| 17 | [Program catalogue](#17-program-catalogue) | The shipped programs |
-| 18 | [The complete picture, power-on to reload](#18-the-complete-picture-power-on-to-reload) | Every step from board power-up to swapping protocols |
-| 19 | [Interfacing external devices](#19-interfacing-external-devices) | What can be wired up and what it needs |
-| 20 | [Verification](#20-verification) | Methods, results, protocol by method |
-| 21 | [Limits and known issues](#21-limits-and-known-issues) | What does not work or was not checked |
-
-**How it was built.**
-
-| # | Section | What it covers |
-|---|---|---|
-| 22 | [AI-assisted workflow](#22-ai-assisted-workflow) | How I worked with Claude, stage by stage |
-| 23 | [Human vs AI split](#23-human-vs-ai-split) | Who did what |
-
-**Reference.**
-
-| # | Section | What it covers |
-|---|---|---|
-| 24 | [Repository map](#24-repository-map) | What is where |
-| 25 | [Reproducing every result](#25-reproducing-every-result) | Claim → command |
-| 26 | [Future work](#26-future-work) | What I would do next |
-| 27 | [Acknowledgements and licence](#27-acknowledgements-and-licence) | Credits, Apache-2.0 |
-
-----
-
-## 4. The challenge
-
-- Jane Street's [protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/) (follow-up to their [ASIC reverse-engineering puzzle](https://blog.janestreet.com/can-you-reverse-engineer-an-asic/)): design an open-source, general-purpose protocol emulator, "reprogrammable enough to support new protocols *after* fabrication". Start with UART, SPI and I2C; stretch goals are low-speed USB and 10 Mbit Ethernet; JTAG, SWD, PS/2 and CAN are suggested.
-- The post points at RP2040 PIO and TI PRU for inspiration and asks what you would do differently. The axis I optimised for is protocols that were not designed in.
-
-| Constraint | Value | Where it shows up |
-|---|---|---|
-| Process | IHP 130 nm CMOS5L through the Tiny Tapeout IHP Verilog template | [src/config.json](https://github.com/NotCleo/JS-PE/blob/main/src/config.json), CI |
-| Area | 8x4 tiles (≈ 202 x 155 µm per tile); I set myself placed cell area ≤ 60 % of the core | D051, D063 |
-| Pins | 8 inputs, 8 outputs, 8 bidirectional, clk, rst_n; only `uio` can be open-drain | [docs/spec/PINS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/PINS.md) |
-| I/O speed | ≈ 10 ns pad round trip (Tiny Tapeout estimate) | pad terms in every timing claim |
-| Clock | from the RP2350 on the demo board; 60 MHz confirmed OK; I targeted 50 MHz (D007) | `CLOCK_PERIOD` 20 |
-| State | the design loses all state when deselected, so the host must be able to reload at any time | HOSTIF 6, D016 |
-| Deadline | 2027-01-18 | competition post |
-
-My own scope for v1 ([docs/spec/REQUIREMENTS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/REQUIREMENTS.md)): UART, SPI and I2C fully implemented and verified; WS2812 and Manchester as the not-designed-in demos with zero RTL change after the freeze; CAN 2.0A as the stretch (D006).
-
-----
-
-## 5. Timeline
-
-Commit dates (IST) from `git log`; 204 commits in total.
-
-| Date | Phase | What happened |
-|---|---|---|
-| Nov 14 | 1, 2a | Template, Claude Code kit, REQUIREMENTS from the brief, three architecture candidates (D001–D016) |
-| Nov 15 | 2b, 3 | REFLEX approved with changes (D017–D021); ARCH, ISA + isa.yaml, PINS, HOSTIF, nine paper programs, VERIF_PLAN; adversarial spec review, ISA trim (D048) |
-| Nov 16 | 4, 5, 6 | Generator, assembler with static arming bound, cycle-accurate ISS, independent protocol models (Phase 4 closed by 13:00); walking skeleton through the GDS flow, SRAM macro fails LVS, flop build green (runs 1–4); engine RTL in lockstep with the ISS; arb, fifo, sig, lfsr |
-| Nov 17 | — | no commits |
-| Nov 18 | 6, 7 | pins, link, full-top integration; run 44184771880 fails setup → pad from registered pin state (D081); run 5 green at 57.7 %; RTL review; area freeze and `rtl-freeze-v1`; UART and SPI brought up in lockstep |
-| Nov 19 | 7, 8 | I2C, WS2812, Manchester; sound static bound (D100); CAN 2.0A written and brought up on the frozen RTL; formal proofs for all planned blocks, which found the FP reset bug (D109) |
-| Nov 20 | 8, 9 | timing runs 6–8, run 8 is sign-off; all 45 tests at gate level; IR-drop estimate; cleanup; this write-up |
-
-----
-
-## 6. How I started
-
-| Input | How I used it |
+| Item | Value |
 |---|---|
-| The competition post | distilled into [REQUIREMENTS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/REQUIREMENTS.md) with MUST/SHOULD rows and the open questions I answered (D001–D008) |
-| The Tiny Tapeout IHP template | kept as the build; [info.yaml](https://github.com/NotCleo/JS-PE/blob/main/info.yaml), CI workflows and the template testbench adapted |
-| RP2040 PIO, TI PRU | not used as a model: none of the candidates is modelled on them (ARCH_CANDIDATES, first lines) |
-| A claude.ai chat before the repo existed | the overall phase plan and the Claude Code kit: CLAUDE.md rules, phase commands, subagents, scripts |
-
-Files as memory: I ran short Claude Code sessions and restarted them often, so nothing important lived only in a conversation. The spec ([docs/spec/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec)) came before code, every choice got a line in [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md) (123 lines), [PROGRESS.md](https://github.com/NotCleo/JS-PE/blob/main/PROGRESS.md) was the handoff and area ledger, and every subtask ended in a commit. More in [section 22](#22-ai-assisted-workflow).
+| Process | IHP SG13 130 nm through the Tiny Tapeout IHP template, 8x4 tiles |
+| Architecture | 4 engines, 128 x 16 shared program memory, 67 instructions, 3-pin host link |
+| Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A |
+| Clock | 50 MHz (about 53 MHz possible, estimate) |
+| Area | 57.3 % of the core (my limit: 60 %) |
+| Sign-off | Tiny Tapeout precheck, DRC, LVS and antenna pass; setup and hold met in all corners |
+| Tests | 45/45 system tests at RTL and at gate level; 149 formal properties proven |
+| Hardware | not tested on a board or silicon yet |
 
 ----
 
-## 7. What I built
+## 2. The challenge
+
+Jane Street asked for an open-source, general-purpose protocol emulator, "reprogrammable enough to support new protocols *after* fabrication". UART, SPI and I2C come first; low-speed USB and 10 Mbit Ethernet are stretch goals. The post points at RP2040 PIO and TI PRU and asks what you would do differently; Cleo is not modelled on either.
+
+The constraints: 8x4 Tiny Tapeout tiles, 24 I/O pins (only the 8 bidirectional ones can be open-drain), about 10 ns pad round trip, a clock from the RP2350 on the demo board, and a chip that loses its program when deselected, so the host must be able to reload it at any time.
+
+I optimised for one thing: running protocols that were not designed in.
+
+----
+
+## 3. How it works
 
 ![](https://github.com/NotCleo/JS-PE/blob/main/docs/images/floorplan.jpeg?raw=true)
 
 *Author's drawing, simplified.*
 
-- Four identical engines E0–E3. Each has a sequencer with one armed instruction and one prefetch word, a 16-bit timer with tick (zero) and tock (compare) events, a shifter with taps (parity, run length, differential, a shared CRC LFSR), three registers and an ALU, and four logical pins bound to any input.
-- One 128 x 16 program memory shared by time division: each engine owns a fixed slot every 4 clocks (or every clock in solo mode), so fetch latency is static and the assembler can prove timing per path.
-- Pads are owned: each output pad has exactly one owner (engine, logical pin), and only the host can enable a pad.
-- A 3-pin UART-style host link (H_RX, H_TX, H_RDY) to the RP2350 loads programs, injects instructions, and multiplexes four byte streams plus events in both directions through 4-byte FIFOs per engine.
-- Toolchain: assembler with a static arming bound, cycle-accurate ISS, `isa.yaml` as the single source for both, MicroPython host SDK.
+| Part | What it does |
+|---|---|
+| Engines (4) | each waits on one instruction and acts in the clock its event (timer, pin edge, host FIFO) arrives; each has a 16-bit timer, a shifter with taps for parity and CRC, three registers, an ALU and four logical pins that can be bound to any input |
+| Program memory | 128 x 16 words shared by time slots: each engine owns a fixed slot, so fetch time never depends on the other engines and timing can be checked before the program runs |
+| Pads | every output pad has exactly one owner and only the host can enable it, so engines cannot fight over a pin |
+| Host link | 3 pins to the RP2350: loads programs, starts and stops engines, and streams bytes and events both ways |
+| Toolchain | assembler with a static timing check, cycle-accurate simulator, MicroPython host library; one ISA file generates the tables for all of them and for the RTL |
 
-Details: [docs/ARCHITECTURE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ARCHITECTURE.md).
+Instructions are 16 bits wide: 67 of them in 6 formats, covering pin actions, branches, arithmetic, host streams, and timer and shifter control.
+
+Why this shape:
+
+- A fixed hardware lane per protocol family only serves the protocols I anticipated, and a single CPU runs out of reaction time once two protocols run together.
+- Events are latched, so a busy engine answers late instead of silently missing an edge.
+- Line coding, bit stuffing and CRC come from generic shifter taps, not dedicated blocks. CAN was built from them.
+- The assembler refuses to build a program that can miss a timing deadline it was given.
+
+More: [architecture](https://github.com/NotCleo/JS-PE/blob/main/docs/ARCHITECTURE.md), [instruction set](https://github.com/NotCleo/JS-PE/blob/main/docs/ISA_REFERENCE.md), [design rationale](https://github.com/NotCleo/JS-PE/blob/main/docs/DESIGN_RATIONALE.md).
 
 ----
 
-## 8. Quick start
+## 4. Quick start
 
-Simulation needs Python 3.12, Icarus Verilog, Verilator and Yosys; formal needs the OSS CAD Suite (`sby`).
+Needs Python 3.12, Icarus Verilog, Verilator and Yosys; formal also needs the OSS CAD Suite.
 
 ```sh
 git clone https://github.com/NotCleo/JS-PE && cd JS-PE
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r test/requirements.txt pyyaml
-make lint        # verilator -Wall
-make swtest      # assembler + ISS tests (pytest)
-make test        # 45 system tests, RTL vs ISS in lockstep (cocotb + Icarus)
-make unit B=jspe_engine
+make lint        # Verilator lint
+make swtest      # assembler and simulator tests
+make test        # 45 system tests, RTL against the simulator
 make formal B=arb
 ```
 
-Assemble a program and look at the timing bound per instruction:
+Assemble a program:
 
 ```sh
 python sw/jspe_asm.py --mem 128 -D CLK_HZ=48000000 \
     docs/spec/programs/uart_tx.s docs/spec/programs/uart_rx.s -o uart
-# -> "16 words, 2 engines, 2 deadlines ok"; writes uart.bin, uart.hex, uart.lst
 ```
 
-On a Tiny Tapeout demo board (untested so far; the RP2350 is the UART partner through PIO):
+Other targets: `make unit B=<module>` (block tests), `make area` (synthesis area), `make mutate B=<block>`, `make gl-all` (gate-level tests).
+
+----
+
+## 5. Protocols
+
+All rates are from simulation.
+
+| Protocol | What it does | Fastest rate |
+|---|---|---|
+| UART | TX and RX; 5–9 data bits, parity, 1–2 stop bits, RTS/CTS | 1 Mbaud tested (TX up to 4.5 Mbaud by analysis) |
+| SPI controller | modes 0–3, MSB or LSB first, 1–16-bit words | 6.25 MHz |
+| SPI target | register device, modes 0–3 | 4.44 MHz |
+| I2C controller | START, repeated START, STOP, ACK/NACK, clock stretching | 100 and 400 kHz to the standard's timing; 0.83 MHz (Fm+) |
+| I2C target | 7-bit address, read and write, clock stretching | 400 kHz |
+| WS2812 \* | LED strip driver | the LED's own rate (794 kbit/s) |
+| Manchester \* | TX, and RX with clock recovery | 2.27 Mbit/s TX, 2.78 Mbit/s RX |
+| CAN 2.0A \* | 11-bit IDs, arbitration, bit stuffing, CRC-15, ACK, error flags | 500 kbit/s |
+
+\* Not designed in: run on the frozen RTL with no RTL change. WS2812 and Manchester were sketched while the ISA was being written, so they may have shaped it; CAN was written entirely afterwards. The one RTL change since the freeze is a reset bug fix found by formal verification.
+
+Programs: [docs/spec/programs/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec/programs). Details per protocol: [capability](https://github.com/NotCleo/JS-PE/blob/main/docs/CAPABILITY.md), [programs](https://github.com/NotCleo/JS-PE/blob/main/docs/PROGRAMS.md).
+
+----
+
+## 6. On the demo board
+
+None of this has run on a board yet; the same sequence runs against the RTL in the tests.
+
+1. Select the project, clock it from the RP2350 at 48 MHz and reset it (`tt.shuttle.tt_um_notcleo_jspe.enable()`, `tt.clock_project_PWM(48_000_000)`).
+2. Connect with the host library: `sync()` checks the chip ID.
+3. `load("x.bin")` checks the image was built for the same clock, writes the program, reads it back, sets up the pads and starts the engines.
+4. Exchange data with `send` and `recv`; program events and errors arrive through `poll`.
+5. To switch protocol, load another image; engines you don't replace keep running. After a deselect or reset, load again.
 
 ```sh
 mpremote cp uart.bin host/jspe.py :
 mpremote run host/examples/uart.py
 ```
 
+Demos for UART, SPI, I2C, WS2812 and Manchester are in [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples). The RP2350 acts as the bus partner, so no external device is needed. Details: [host interface](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md).
+
 ----
 
-## 9. Sign-off
+## 7. Pins and wiring
 
-All figures from GDS run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065) (run 8, current `src/`), recorded in [PROGRESS.md](https://github.com/NotCleo/JS-PE/blob/main/PROGRESS.md) "Sign-off record" and the GDS-runs line; gate level from `make gl-all` on that run's netlist (D123).
+Only the three host-link pins are fixed; every other pad is assigned by the program. Defaults of the shipped programs:
 
-| Check | Result |
+| Pins | Use |
 |---|---|
-| Flow | Tiny Tapeout IHP template, LibreLane, `CLOCK_PERIOD` 20 ns, config of run 5 (D121) |
-| TT precheck | pass |
-| DRC (Magic, routing) | pass |
-| LVS | pass |
-| Antenna | pass |
-| Setup worst slack, slow / typ / fast | 1.183 / 8.105 / 12.128 ns, TNS 0 |
-| Hold worst slack, fast / typ / slow | 0.097 / 0.273 / 0.588 ns, TNS 0 |
-| Max slew / max capacitance | 2 violations in the slow corner / 0 (see [section 21](#21-limits-and-known-issues)) |
-| IR drop (hand estimate) | worst per net 32.3 mV = 2.7 %; VDD+VSS combined worst 64.6 mV = 5.4 %, realistic 12.3 mV = 1.0 % ([docs/IR_DROP.md](https://github.com/NotCleo/JS-PE/blob/main/docs/IR_DROP.md)) |
-| Gate-level simulation | 45 PASS, 0 FAIL, 0 SKIP (all system tests on the netlist; several use shorter configuration lists at gate level) |
-| Placed area | 692 464 µm² = 57.3 % of the 1 208 170 µm² core (limit 60 %, D051/D063); 46 813 cells, 4 387 flip-flops |
-| Power (typ) | 19.5 mW |
-| Fmax | ≈ 53 MHz slow corner (estimate from 1.183 ns slack; no run at 16.7 ns) |
+| `ui_in[3]`, `uo_out[4]`, `uo_out[5]` | host link RX, TX, ready (fixed) |
+| `uo_out[0]`, `ui_in[7]` (+ `uo_out[1]`, `ui_in[2]`) | UART TX, RX (+ RTS, CTS) |
+| `uio[0]`–`uio[3]` | SPI CS, MOSI, MISO, SCK |
+| `uio[6]`, `uio[5]` | I2C SCL, SDA (open-drain) |
+| `uio[4]` | CAN (open-drain) |
+| `uo_out[2]` | WS2812 data |
+| `uo_out[3]`, `ui_in[4]` | Manchester TX, RX |
 
-The road there (runs 1–8) is in [docs/VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) section 4.
+All I/O is 3.3 V with no on-chip pull-ups, and only `uio` pads can be open-drain or tri-state.
 
-----
-
-## 10. Pinout
-
-Only the three host-link pads are fixed; every other pad is assigned when a program is loaded (inputs by the engine's bind registers, outputs by the host-only pad configuration). The table shows the default maps of the shipped programs ([docs/spec/PINS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/PINS.md); RP2350 GPIO per the TT demo board map).
-
-| Pad | Fixed / default use | Can be open-drain | RP2350 GPIO |
-|---|---|---|---|
-| `ui_in[3]` | **H_RX** host → chip (fixed) | — (input) | 20 (UART1 TX) |
-| `uo_out[4]` | **H_TX** chip → host (fixed) | no | 37 (UART1 RX) |
-| `uo_out[5]` | **H_RDY** chip ready, active low (fixed) | no | 38 (UART1 CTS) |
-| `ui_in[7]` | UART RXD | — | 24 |
-| `ui_in[2]` | UART CTS (optional) | — | 19 |
-| `ui_in[4]` | Manchester RX | — | 21 |
-| `ui_in[0,1,5,6]` | free | — | 17, 18, 22, 23 |
-| `uo_out[0]` | UART TXD | no | 33 |
-| `uo_out[1]` | UART RTS (optional) | no | 34 |
-| `uo_out[2]` | WS2812 DOUT | no | 35 |
-| `uo_out[3]` | Manchester TX | no | 36 |
-| `uo_out[6,7]` | free | no | 39, 40 |
-| `uio[0]` | SPI CS | yes | 25 |
-| `uio[1]` | SPI MOSI | yes | 26 |
-| `uio[2]` | SPI MISO | yes | 27 |
-| `uio[3]` | SPI SCK | yes | 28 |
-| `uio[4]` | CAN bus (open-drain, external pull-up) | yes | 29 |
-| `uio[5]` | I2C SDA (open-drain) | yes | 30 |
-| `uio[6]` | I2C SCL (open-drain) | yes | 31 |
-| `uio[7]` | free | yes | 32 |
-| `clk`, `rst_n` | from the RP2350 | — | 16, 14 |
-
-Rules: all I/O is 3.3 V, no pull-ups on chip; `uo_out` pads are always driven (push-pull), so open-drain and tri-state signals go on `uio`; an open-drain pad drives low or releases, never high. After reset every `uio` is released and every `uo_out` is 0 except H_TX = 1.
-
-----
-
-## 11. Architecture overview
-
-```
- pads ─► jspe_pins (2-FF sync, filter, pad owners) ─► lvl[15:0] ─┬─► E0 ─┐
-                                                                 ├─► E1 ─┤  each engine: sequencer (IR + 1 prefetch),
- pads ◄─ pad registers ◄─ owner mux ◄── registered pin states ◄──┼── E2 ─┤  timer, shifter + taps, R0–R2 + ALU,
-                                                                 └── E3 ─┘  4 logical pins
- jspe_arb: 4 memory slots ─► jspe_mem 128x16      jspe_sig: 8 shared flags      jspe_lfsr: shared CRC
- jspe_link (H_RX, H_TX, H_RDY) ◄─► RX/TX byte FIFOs per engine, commands, registers, memory access
-```
-
-| Idea | What it gives | Spec |
-|---|---|---|
-| `guard : operation`, held until the guard fires | the action happens in the clock of the event; reaction 3–4 clk + pad | ARCH 4.1 |
-| events latched while busy | a late instruction answers late, never misses; a second event sets OVR | ARCH 6 |
-| time-division memory slots | fetch latency depends only on the slot map: 2–5 clk default, 2 clk solo | ARCH 4.2 |
-| jump folding, micro-loop | a whole SPI byte runs as one held instruction pair with no fetch | ARCH 4.4 |
-| follow pins, auto-transfer | a pin tracks the shifter every clock; bytes move to/from the FIFOs at the word boundary | ARCH 8 |
-| watchers | two condition cells per engine can preempt any wait (STOP, CS rise, timeouts) | ISA 6 |
-| static arming bound | the assembler proves each path arms its next guard in time, or fails the build | ISA 10 |
-
-More: [docs/ARCHITECTURE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ARCHITECTURE.md); normative: [docs/spec/ARCH.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/ARCH.md).
-
-----
-
-## 12. Modules
-
-Synthesized area from `make area LIB=<sg13g2 typ liberty>` on 2026-11-20 (per instance); formal from [formal/RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md); unit tests are the cocotb files in [test/unit/](https://github.com/NotCleo/JS-PE/tree/main/test/unit).
-
-| Module | Purpose | x | Area µm² | Formal | Unit tests |
-|---|---|---|---|---|---|
-| [tt_um_notcleo_jspe](https://github.com/NotCleo/JS-PE/blob/main/src/tt_um_notcleo_jspe.v) | top, reset sync | 1 | 131 | 4 properties, from an arbitrary state | system tests |
-| [jspe_seq](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_seq.v) | sequencer, fetch, decode, guards, watchers, events | 4 | 18 989 | 56 properties, k ≤ 7 | engine lockstep |
-| [jspe_alu](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_alu.v) | R0–R2, ALU, address adder | 4 | 12 374 | none | engine lockstep |
-| [jspe_timer](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_timer.v) | timer, tick/tock, sync | 4 | 8 177 | 10 properties | engine lockstep |
-| [jspe_shift](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_shift.v) | shifter, taps, auto-transfer | 4 | 6 604 | 7 properties | engine lockstep |
-| [jspe_epins](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_epins.v) | 4 logical pins per engine | 4 | 5 089 | 9 properties | engine lockstep |
-| [jspe_engine](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_engine.v) | engine glue | 4 | 815 | via sub-blocks | 12 (lockstep vs ISS) |
-| [jspe_link](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_link.v) | host link | 1 | 23 803 | 20 properties, any host | 5 |
-| [jspe_pins](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_pins.v) | sync, filter, pad owners, pad registers | 1 | 17 625 | 10 properties | 7 |
-| [jspe_mem](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_mem.v) | 128 x 16 memory (flops) | 1 | 162 095 | none | none (system tests) |
-| [jspe_fifo](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_fifo.v) | 4-deep FIFO, RX 8 bit / TX 9 bit | 4 + 4 | 2 959 / 3 273 | 8 properties | 8 |
-| [jspe_arb](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_arb.v) | memory slot arbiter | 1 | 1 612 | 15 properties | 9 |
-| [jspe_lfsr](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_lfsr.v) | shared 32-bit LFSR | 1 | 6 310 | 5 properties | 8 |
-| [jspe_sig](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_sig.v) | 8 signal flags | 1 | 862 | 5 properties | 7 |
-| **total** | | | **445 560 synthesized** (one engine 52 049) | 149 properties, 213 mutants | 56 |
-
-Placed: 692 464 µm² (x 1.55 over synthesis: timing repair, hold, clock buffers). The memory is 36 % of the synthesized area.
-
-----
-
-## 13. Instruction set
-
-16-bit words, 6 formats, 67 instructions ([docs/ISA_REFERENCE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ISA_REFERENCE.md); normative [docs/spec/ISA.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/ISA.md); machine-readable [docs/spec/isa.yaml](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/isa.yaml), which generates the assembler tables, the ISS decoder and [src/jspe_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_isa.vh)).
-
-| Format | Bits 15..12 | Guard | Contents |
-|---|---|---|---|
-| E | `0…` | yes | two pin actions (`0 1 z d out q f`, toggle), optional sample `shin`, loop field (`rep`, `head`, `tail`) |
-| JP | `10…` | yes | jump on a live pin level, ±64 |
-| JF | `1100` | no | `jmp` and 24 flag jumps (Z, CY, B, PAR, RUN, word, FIFO, cells, OVR, MIS) |
-| GM | `1101` | yes | move, stream push/pull, timer start/stop, sample, control, signal flags, watchers, events |
-| IM | `1110` | no | `li`, `lih`, `add #`, `cmp #` |
-| RX | `1111` | no | 12 ALU ops, absolute `jmp`/`call`, `ld`/`st` (4 addressing modes), `wcfg`/`rcfg` |
-
-| Group | Instructions |
+| Device | Extra parts |
 |---|---|
-| pins and shift | `pK <- 0/1/z/d/out/q/f/t`, `shin`, `loop { }` |
-| branches | `jhi`, `jlo`, `jmp`, `jz`…`jnmis`, `call`, `ret` |
-| data | `mov`, `li`, `lih`, `add`, `adc`, `sub`, `cmp`, `and`, `or`, `xor`, `tst`, `shl`, `shr`, `rlc`, `rrc`, `ld`, `st` |
-| host streams | `push`, `pushh`, `pull`, `pullh`, `evt` |
-| timer and shifter | `tsync`, `tset`, `tstop`, `smp`, `wrst` |
-| control | `halt`, `watch`, `ovclr`, `sset`, `sclr`, `wcfg`, `rcfg` |
+| UART, SPI, Manchester at 3.3 V | none |
+| I2C | two 4.7 kΩ pull-ups to 3.3 V |
+| WS2812 strip at 5 V | 74AHCT1G125 level shifter, 330 Ω resistor, 5 V supply with ≥ 470 µF |
+| CAN bench (wired-AND, no transceiver) | one pull-up on `uio[4]` |
+| RS-232, RS-485, CAN with a transceiver, 5 V logic | a transceiver or level shifter (feasible, not tested) |
 
-Guards: `always`, `tick`, `tock`, `hrx`, `htx`, `c0`, `c1`, `never`, rise/fall of p0–p3. Undefined encodings trap the engine.
-
-----
-
-## 14. Design rationale
-
-Full text with all 13 decisions: [docs/DESIGN_RATIONALE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DESIGN_RATIONALE.md); every line is in [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md).
-
-| # | Decision | Rejected | Why | D-IDs |
-|---|---|---|---|---|
-| 1 | Reactive engines, `guard : operation` | hardware bit lanes; one event-driven CPU with timed channels; eFPGA | lanes only serve protocols I built; one CPU runs out of reaction time with two protocols; eFPGA did not fit | D009, D017 |
-| 2 | Strict time-division memory with 1-word prefetch and jump folding | fixed priority; depth-2 prefetch; run-time slot donation | fetch time must not depend on other engines, or no timing claim is static | D018, D025, D027 |
-| 3 | Latched events + OVR | instantaneous events | a busy engine answers late instead of losing an edge silently | D019 |
-| 4 | Micro-loop as 2 bits in the instruction | loop header word; separate counter | no fetch on loop entry; exit on the word boundary | D024 |
-| 5 | Follow pin + auto-transfer | autonomous shift-on-edge unit | ≈ 35 vs 60–75 cells per engine, and it serves any shifted stream | D020, D026 |
-| 6 | Generic taps + shared LFSR | NRZI/Manchester/stuffing/CRC engines | a fixed engine is a protocol designed in; CAN stuffing and CRC came from taps | D013, D029 |
-| 7 | One owner per pad, host-only enable | engine-side OR binding | no contention by construction; free monitor mode | D014, D033 |
-| 8 | 3-pin clock-locked async host link, push model | SPI host link (pull) | the chip sends data and events when it has them, without polling | D001, D011, D031 |
-| 9 | Configuration through injected instructions | host configuration bus | no second access path; init code takes no memory | D030 |
-| 10 | Static arming bound with stated `.assume` | trusting simulation alone | each timing claim becomes an assembly error when broken | D054, D100 |
+Full pin table and wiring diagrams: [PINS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/PINS.md), [interfacing](https://github.com/NotCleo/JS-PE/blob/main/docs/INTERFACING.md).
 
 ----
 
-## 15. Software
+## 8. Verification and sign-off
 
-| Tool | File | What it does |
-|---|---|---|
-| Assembler | [sw/jspe_asm.py](https://github.com/NotCleo/JS-PE/blob/main/sw/jspe_asm.py) (1 048 lines) | multi-file images, `-D` variants, `--mem 128` check; `.init`/`.entry` become host-injected instructions; `.pad`, `.slots`, `.filter`; outputs `.bin`, `.hex`, `.lst` |
-| Static arming bound | inside the assembler | for every guarded instruction and every path, the clocks until the next guard is armed, from the slot map; `.deadline n` fails the build if a path exceeds n; `.assume armed m` is the only way to credit a wait (a stated precondition, checked by ISS test T6) |
-| ISS | [sw/jspe_iss.py](https://github.com/NotCleo/JS-PE/blob/main/sw/jspe_iss.py) (1 346 lines) | cycle-accurate model of the chip (engines, fetch slots, timer, shifter, FIFOs, pins, host link); golden model for lockstep; `play_bin` replays images through the link model |
-| ISA generator | [sw/gen_isa.py](https://github.com/NotCleo/JS-PE/blob/main/sw/gen_isa.py) | [isa.yaml](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/isa.yaml) → [sw/isa_def.py](https://github.com/NotCleo/JS-PE/blob/main/sw/isa_def.py), [src/jspe_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_isa.vh), [formal/jspe_fv_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/formal/jspe_fv_isa.vh); `--check` verifies all are current |
-| Protocol models | [sw/tests/models.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/models.py) | independent UART, SPI, I2C (UM10204 timing), WS2812, Manchester and CAN models, written from the standards |
-| Host SDK | [host/jspe.py](https://github.com/NotCleo/JS-PE/blob/main/host/jspe.py) (MicroPython) | `Link`: `sync`, `load(.bin)` with CLK check and read-back, `send`, `recv`, `poll` (streams, events, notices), `rdreg`/`wrreg`, `rdmem`/`wrmem` ([docs/HOST_INTERFACE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md)) |
-| Host demos | [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples) | `uart.py`, `spi.py`, `i2c.py`, `ws2812.py`, `manchester.py`; the RP2350 is the bus partner (not run on a board yet) |
+The simulator was written from the spec before the RTL. Every program was proven on it against independent protocol models, and the RTL was then compared with it on every output pad in every clock.
 
-| Make target | Does |
+| Method | Result |
 |---|---|
-| `make lint` | verilator `--lint-only -Wall` on all RTL |
-| `make swtest` / `make swtest-all` | pytest in `sw/tests` (skips / includes tests > 20 s) |
-| `make unit B=<module>` | cocotb block test |
-| `make test` | 45 top-level cocotb tests, RTL vs ISS lockstep |
-| `make area [B=<module>] [LIB=…]` | yosys synthesis, cells and µm² per module |
-| `make formal B=<block>` | SymbiYosys proofs, results into `formal/RESULTS.md` |
-| `make mutate B=<block>` | RTL mutants against the proofs |
-| `make gl-fetch RUN=<id>`, `make gl-all` | fetch a GDS run's netlist, run all 45 tests at gate level |
+| Assembler and simulator tests | 350 pass |
+| RTL block tests | 56 pass |
+| System tests, RTL and simulator in lockstep | 45/45 |
+| Random programs on the full chip against the simulator | 3 M clocks clean |
+| The same 45 tests on the post-layout netlist | 45/45 |
+| Formal proofs (SymbiYosys, 11 blocks) | 149 properties proven |
+| Mutation testing of the proofs | 211 of 213 mutants caught, 2 equivalent |
 
-RTL: 1 972 lines of Verilog-2005 in [src/](https://github.com/NotCleo/JS-PE/tree/main/src)`*.v` (14 modules and the SRAM black box), plus the generated `jspe_isa.vh`.
+Sign-off from the [final GDS run](https://github.com/NotCleo/JS-PE/actions/runs/44625407065): precheck, DRC, LVS and antenna pass; worst setup slack 1.18 ns at 50 MHz in the slow corner; hold met in all corners; 57.3 % placed area; 19.5 mW typical; IR drop estimated by hand at 2.7 % worst per net.
 
-----
-
-## 16. Protocols
-
-All rates are from simulation (no board yet). Source tags: **R** measured on RTL in lockstep with the ISS, **G** the same test passed at gate level, **I** measured on the ISS, **B** from the static bound or the program's timing derivation, not run at that rate. "After freeze" = written after tag `rtl-freeze-v1` (`42457db`). Full table with limits: [docs/CAPABILITY.md](https://github.com/NotCleo/JS-PE/blob/main/docs/CAPABILITY.md).
-
-| Protocol | Roles, modes | Tested configurations | Max rate (source) | Words | Engines | Program | Tests |
-|---|---|---|---|---|---|---|---|
-| UART | TX, RX; 5–9 data bits, parity, 1/1.5/2 stop, inverted, MSB first, RTS/CTS | 1 M, 921 600, 115 200 baud, ±2 % senders (R); 1 Mbaud (G); 300 baud (I) | TX 4.5 Mbaud (B); RX 3.3 Mbaud 8N1 (B) | 8 + 8 (8N1) | 1 + 1 | [uart_tx.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/uart_tx.s), [uart_rx.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/uart_rx.s) | [test_uart.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_uart.py) |
-| SPI controller | modes 0–3, MSB/LSB, 1–16-bit words | 6.25 / 5 / 1 MHz x modes x order x word length (R, G) | 6.25 MHz (R); write-only 8.3 MHz, solo 12.5 MHz (B) | 17–21 | 1 | [spi_ctrl.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/spi_ctrl.s) | [test_spi.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_spi.py) |
-| SPI target | register device, modes 0–3 | 4.44, 4, 2, 1, 0.1 MHz, CS aborts, shared bus (R, G) | 4.44 MHz (R); ≈ 6 MHz solo (B) | 12 + table | 1 | [spi_tgt.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/spi_tgt.s) | same |
-| I2C controller | START/Sr/STOP, ACK/NACK, stretching with timeout | 100 kHz (Sm), 400 kHz (Fm) against the UM10204 tables (R, G) | 0.83 MHz, Fm+ table (R, I) | 41 | 1 | [i2c_ctrl.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/i2c_ctrl.s) | [test_i2c.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_i2c.py) |
-| I2C target | 7-bit address, read/write, stretching | 100 and 400 kHz, START/STOP at every bit, late host (R, G) | 400 kHz (R) | 32 | 1 | [i2c_tgt.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/i2c_tgt.s) | same |
-| WS2812 (not designed in) | LED stream | 256 LEDs, every pulse in its ±150 ns window (R, G) | 794 kbit/s, set by the LED (R) | 9 | 1 | [ws2812.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/ws2812.s) | [test_ws2812.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_ws2812.py) |
-| Manchester (not designed in) | TX, RX with clock recovery, code-violation check | TX BIT 50, 22; RX BIT 50, 22, 18 with ±2 % and jitter; loop-back (R, G) | TX 2.27, RX 2.78 Mbit/s (R) | 9 + 14 | 2 | [manchester.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/manchester.s) | [test_manchester.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_manchester.py) |
-| **CAN 2.0A (not designed in, after freeze)** | 11-bit ID, data/remote, arbitration, stuffing, CRC-15, ACK, error flags | 500 kbit/s vs an independent node (R, G); 125 kbit/s, ±1 % (I) | 500 kbit/s (R); limit 625 kbit/s (B) | 128 | 2 | [can.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/can.s) | [test_can.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_can.py) |
-
-The only RTL change after the freeze is a bug fix (D109, engine reset FP = 1, found by formal). WS2812 and Manchester were chosen in Phase 1 as the not-designed-in demos (D006) and drafted on paper while the ISA was being written, so they may have shaped it; CAN was not.
+Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md), [formal results](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md).
 
 ----
 
-## 17. Program catalogue
+## 9. Limits
 
-Nine programs in [docs/spec/programs/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec/programs), each with a header stating words, clocks per bit, maximum rate, engines, pins, host stream format, events and timing assumptions. Build options (`-D`), stream formats, events, host examples and the combinations that have been run together: [docs/PROGRAMS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/PROGRAMS.md).
-
-| Program | Host → chip | Chip → host |
-|---|---|---|
-| uart_tx / uart_rx | one byte per character | bytes; event 1 framing, 2 parity |
-| spi_ctrl | `[n]` + n words | n words read |
-| spi_tgt | — (register table in memory) | — |
-| i2c_ctrl | (flags, data) per step | sampled bytes + ACK; event 3 timeout |
-| i2c_tgt | bytes for reads | address byte + received bytes |
-| ws2812 | 3 bytes per LED | — |
-| manchester | TX bytes | RX bytes after SFD; event 4 end of frame |
-| can | frames | frames + status events |
-
-----
-
-## 18. The complete picture, power-on to reload
-
-What happens from plugging in the demo board to swapping one protocol for another. Steps 1–3 use the Tiny Tapeout MicroPython SDK on the RP2350; steps 4–10 are [host/jspe.py](https://github.com/NotCleo/JS-PE/blob/main/host/jspe.py) and the chip ([docs/spec/HOSTIF.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/HOSTIF.md) 6). None of this has run on a board yet; the same sequence runs against the RTL in [test/test_uart.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_uart.py).
-
-| # | Step | Who | What happens |
-|---|---|---|---|
-| 1 | Power-on | board | the RP2350 boots the Tiny Tapeout MicroPython firmware; no project is selected yet |
-| 2 | Project select + clock | RP2350 | `tt.shuttle.tt_um_notcleo_jspe.enable()`; `tt.clock_project_PWM(48_000_000)` (48 MHz so the 3 Mbaud host UART is exactly 16 clk per bit) |
-| 3 | Reset | RP2350 | `tt.reset_project(True)`, open UART1 on GPIO20/37 with CTS on GPIO38, release reset; the chip comes up with engines stopped, pads released, link at 16 clk per bit |
-| 4 | Link check | host | `SYNC` → `ESC 0xC4` + ID 0x4A10 |
-| 5 | Image load | host | `load("x.bin")`: CLK record must match the host's clock (else stop, D089); `STOP`+`RST` the image's engines; `WRREG SLOTMAP` if set; `WRMEM` the code, `RDMEM` it back and compare |
-| 6 | Pad config | host | `WRREG FILT`; `WRREG PAD_*` with enable = 0; `EXEC` the initialisation (bindings, shifter, timer, constants, initial pin levels, watchers), `EXEC jmp entry`; then `PAD_*` with enable = 1 so no pad shows a wrong level during setup |
-| 7 | RUN | host | `RUN mask`: every engine in the mask starts in the same clock |
-| 8 | Streaming | both | host data: `SEL e` + bytes into engine e's 4-byte RX FIFO, H_RDY stops the host with 2 entries in reserve; chip data: stream bytes from the TX FIFOs, announced by `ESC e` on every stream change |
-| 9 | Events and errors | chip → host | `ESC 0x40\|c` program events in stream order (framing error, end of frame, CAN frame OK…); notices `0x80\|e` overrun, `0x84\|e` halt, `0x88\|e` trap, `0x8C` link error; `RDREG ESTe` for PC and flags; a break + `SYNC` recovers the link |
-| 10 | Reload another protocol | host | `STOP`+`RST` the engines to replace and load the new image while the others keep running (memory writes use free slots; read-back in short chunks so running streams wait < 2 000 clk, D088). After deselect or reset everything is reloaded from step 3 |
-
-----
-
-## 19. Interfacing external devices
-
-Detail, one diagram per protocol family and the electrical rules: [docs/INTERFACING.md](https://github.com/NotCleo/JS-PE/blob/main/docs/INTERFACING.md). "Supported" = verified in simulation only; "feasible" = my reading of the limits, with no program or test.
-
-| Device class | Protocol, modes | Pins / Pmod | Extra parts | Status |
-|---|---|---|---|---|
-| UART device at 3.3 V | UART, RTS/CTS | `uo_out[0]`, `ui_in[7]` (+ `uo_out[1]`, `ui_in[2]`) | none | supported |
-| RS-232 / RS-485 / DMX512 | UART (+ DE pin) | as UART + one spare pad | level transceiver; RS-485 needs a program change for DE | feasible |
-| SPI peripheral | SPI controller, modes 0–3 | `uio[3:0]` (TT Pmod row) | none | supported |
-| SPI controller reading the chip | SPI target | `uio[3:0]` | none | supported |
-| I2C devices | I2C controller or target | `uio[6]` SCL, `uio[5]` SDA, open-drain | 2 x 4.7 kΩ to 3.3 V for 400 kHz (RP2350 internal pull-ups at 100 kHz, functional only) | supported, single controller |
-| WS2812 strip at 5 V | WS2812 | `uo_out[2]` | 74AHCT1G125, 330 Ω, 5 V supply with ≥ 470 µF | supported |
-| Manchester link | Manchester TX/RX | `uo_out[3]`, `ui_in[4]` | none | supported |
-| CAN bench (wired-AND, no transceiver) | CAN 2.0A, 125–500 kbit/s | `uio[4]` open-drain | one pull-up (1 kΩ in can_design.md, 2.2 kΩ in PINS 5) | supported |
-| CAN bus with a transceiver | CAN 2.0A | two pads | 3.3 V CAN transceiver; program change | feasible |
-| 1-Wire | open-drain slots | one `uio` pad | 4.7 kΩ pull-up | feasible (no program) |
-| 5 V logic | any | any | level shifter (pads are not 5 V tolerant) | needs parts |
-| Ethernet RMII, USB low speed | — | — | — | not supported |
+- No hardware results: every rate is from simulation, and the host code has never run on an RP2350.
+- 128-word program memory: the SRAM macro failed LVS, so programs share 128 words of flip-flops. CAN fills all of it and runs alone.
+- Two max-slew violations remain in the slow corner (precheck still passes).
+- I2C has no multi-controller arbitration. CAN leaves fault confinement to the host and flags 29-bit frames as errors.
+- No formal proofs for the ALU and the memory, and no code coverage measured.
+- The simulator and the RTL come from the same spec, so a misreading could be shared; the independent protocol models, formal proofs and reviews are the check against that.
+- USB low speed and Ethernet are not supported: they need faster reactions than 3–4 clocks at 50 MHz.
 
 ![](https://github.com/NotCleo/JS-PE/blob/main/docs/images/ethernet_concept.jpeg?raw=true)
 
-*Concept only — not implemented: RMII needs 2 bits every clock at 50 MHz, beyond the 3–4 clk reaction floor.*
+*Concept only, not implemented: RMII needs 2 bits every clock at 50 MHz.*
 
 ----
 
-## 20. Verification
+## 10. How it was built
 
-Strategy: a cycle-accurate ISS written from the spec before the RTL; every program proven on it against independent protocol models; RTL compared with the ISS on all 24 output pads in every clock; formal proofs per block with mutation testing; the same 45 system tests on the post-layout netlist. Details and per-block formal table: [docs/VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md).
+I built Cleo with Claude Code in seven days (2026-11-14 to 2026-11-20). The working rules, the phase commands and the plan were drafted with Claude in a chat before the repo existed. The spec came before the code; when something was unclear, Claude stopped and asked, and every decision went into [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md). Sessions were short, so all state lived in files and commits.
 
-| Method | Tool | Scope | Proves | Result |
+| Stage | Model | Mode | Output tokens | Result |
 |---|---|---|---|---|
-| ISS + toolchain tests | pytest | assembler, semantics, fetch timing, every program vs models | programs meet protocol timing in the model | 350 passed |
-| RTL block tests | cocotb + Icarus | arb, engine, fifo, lfsr, link, pins, sig | blocks match ARCH | 56 pass |
-| Engine lockstep | cocotb vs ISS | one engine, internal state every clock | RTL engine = ISS | 250 seeds x 20 000 clk clean |
-| System lockstep | cocotb vs ISS | whole chip through the pads | 24 pad bits = ISS every clock | 45/45 |
-| Random full chip | cocotb vs ISS | random programs, pads, host commands, resets | block glue correct | 26 seeds / 3.0 M clk clean; 5 glue mutants caught |
-| Bus models | Python, independent | UART, SPI, I2C (UM10204), WS2812, Manchester, CAN | protocol on the pads | in every protocol test |
-| Bound vs ISS sweep | pytest T5/T6 | every `.deadline` path; every step x 4 slot maps x 4 phases | static bound ≥ measured arming time | 0 violations |
-| Formal | SymbiYosys, k-induction | 11 blocks | spec properties in every reachable state | 149 proven, 211 covers |
-| Mutation | `make mutate` | 213 RTL mutants | proofs can fail | 211 caught, 2 equivalent |
-| Gate-level sim | Icarus + IHP cells | 45 system tests on the netlist | no RTL-vs-netlist difference | 45/45 |
-| STA | OpenROAD, 3 corners | 20 ns | setup and hold | met; 2 slow-corner slew violations |
-| IR drop | hand estimate | power grid | drop within budget | 2.7 % per net worst; 5.4 % combined worst (estimate) |
-
-| Protocol | ISS | Bound sweep | RTL lockstep | Independent model | Gate level | Board |
-|---|---|---|---|---|---|---|
-| UART TX/RX | yes | yes | 8 tests | yes | yes | no |
-| SPI controller / target | yes | yes | 9 tests | yes | yes | no |
-| I2C controller / target | yes | yes | 11 tests | UM10204 checker | yes | no |
-| WS2812 | yes | yes | 2 tests | yes | yes | no |
-| Manchester | yes | yes | 4 tests | yes | yes | no |
-| CAN 2.0A | yes | yes | 4 tests | yes | yes | no |
-| Host link / system | yes | — | 7 tests | host-link model | yes | no |
-
-Formal is per block, not per protocol: no protocol-level property is proven.
-
-----
-
-## 21. Limits and known issues
-
-| Issue | Detail |
-|---|---|
-| No hardware results | nothing has run on silicon or a demo board; every rate is from simulation, and `host/` code has never run on an RP2350 |
-| 128-word memory | the SRAM macro failed LVS (D062), so programs share 128 words; CAN needs all of them and runs alone |
-| 2 max-slew violations | slow corner, run 8; VERIF_PLAN asked for zero; precheck passes |
-| IR drop is estimated by hand | combined worst case 5.4 %, over the 5 % per-net target if read as combined |
-| Coverage | no RTL code coverage measured; ISS functional coverage bins not collected |
-| Tests not run at RTL | VERIF H3, H6, C1, MON1, EI1; random full chip ran 26 seeds, not the planned 200 |
-| No formal for `jspe_alu`, `jspe_mem` | lockstep only |
-| I2C | no multi-controller arbitration (D041) |
-| CAN | hard resync on every recessive→dominant edge (an 8-clk glitch 28–72 clk into a recessive bit drops the bit → CRC error, retry); ACK delimiter/EOF unchecked; fault confinement on the host; 29-bit frames error-flagged |
-| SPI target | timing rule: CS high ≥ 25 clk, first edge ≥ 7 clk after CS falls (D101) |
-| Not supported | USB low speed, 10BASE-T / RMII Ethernet: beyond the reaction floor at 50 MHz |
-| Spec and RTL share one reading | ISS and RTL were written from the same spec; independent models, formal and reviewer passes are the counterweight |
-
-----
-
-## 22. AI-assisted workflow
-
-I built this with Claude Code in seven days. The working rules ([CLAUDE.md](https://github.com/NotCleo/JS-PE/blob/main/CLAUDE.md)), one slash command per phase ([.claude/commands/](https://github.com/NotCleo/JS-PE/tree/main/.claude/commands)) and the phase plan were drafted with Claude in a claude.ai chat before the repo existed.
-
-| Practice | What it meant |
-|---|---|
-| Spec before code | spec → ISS → RTL; when the spec was unclear, Claude stopped and proposed a fix, and my answer became a DECISIONS line |
-| Files as memory | state lived in the spec, DECISIONS.md, PROGRESS.md and a commit per subtask, so a session could restart at any time |
-| Subagents | `test-runner` ran tests and returned pass/fail only; `reviewer` gave a fresh-eyes review of every block and protocol |
-
-| Stage | Model | Result |
-|---|---|---|
-| 0 kit + plan | Claude (claude.ai chat) | rules, phase commands, subagents |
-| 1 requirements | Opus 5.5 | REQUIREMENTS, scope (D001–D008) |
-| 2 architecture + spec | Fable 5.2 | three candidates, REFLEX chosen; ARCH, ISA, PINS, HOSTIF, VERIF_PLAN |
-| 3 spec review | Fable 5.2 | REVIEW.md, ISA trim |
-| 4 assembler + ISS | Opus 5.5 | assembler, golden ISS, bus models |
-| 5 skeleton | Opus 5.5 | first GDS runs, flop memory build |
-| 6 RTL | Opus 5.5, Fable 5.2 | all blocks, engine in lockstep with the ISS |
-| 7 protocols | Opus 5.5 | 9 programs in lockstep |
-| 8 sign-off | Opus 5.5 | formal proofs, run 8 sign-off, GL 45/45, IR estimate |
-| 9 write-up | Opus 5.5 | this README and docs/ |
-
-About 5.7M output tokens in total (approximate). Per-stage tokens, prompts and my decisions: [docs/AI_USAGE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md) and [docs/ai/PROMPT-LIST/prompts.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md).
-
-----
-
-## 23. Human vs AI split
-
-From DECISIONS.md and the prompts:
+| 0 plan | Claude (chat) | — | not recorded | rules, phase commands, plan |
+| 1 requirements | Opus 5.5 | accept edits | 63k | requirements and scope |
+| 2 architecture + spec | Fable 5.2 | accept edits | 1.0M | three candidate designs, one chosen; full spec |
+| 3 spec review | Fable 5.2 | accept edits | 470k | adversarial review, ISA trimmed |
+| 4 assembler + simulator | Opus 5.5 | auto | 529k | assembler, simulator, protocol models |
+| 5 skeleton | Opus 5.5 | auto | 167k | first GDS runs |
+| 6 RTL | Opus 5.5, Fable 5.2 | plan, auto | 854k | all blocks, integrated |
+| 7 protocols | Opus 5.5 | auto | 1.7M | 9 programs running |
+| 8 sign-off | Opus 5.5 | auto | 815k | formal proofs, timing closure, gate-level tests |
+| 9 write-up | Opus 5.5 | auto | 106k | docs |
+| **Total** | | | **≈ 5.7M** | |
 
 | Work | Me | Claude |
 |---|---|---|
-| Requirements and scope | answered every open question (D001–D008) | distilled the brief, proposed the questions |
-| Architecture | chose REFLEX and changed it (D017–D021) | wrote three candidates, scored them, wrote the spec |
-| Judgement calls | about 40 DECISIONS lines marked as my decision, request or approval | proposed the other ~80 and stopped to ask when the spec was unclear |
-| RTL, ISS, assembler, tests, formal properties, programs | reviewed through summaries, test results and reviewer reports; did not hand-review every line | wrote all of it |
-| Flow and CI | pushed every batch, watched the GitHub Actions runs, set the run rules | changed configs, read reports, diagnosed failures |
-| Documents | set the structure and rules for this write-up, answered its TODOs | wrote the text |
-| Images | the two README images | — |
+| Scope and architecture | answered the open questions, chose the architecture and changed it | proposed the questions, wrote three candidates and the spec |
+| Decisions | about 40 of the ~120 logged decisions | proposed the rest |
+| Code, tests, proofs, programs | reviewed through test results and review reports | wrote them |
+| Flow and docs | ran and watched the GDS runs, set the rules for the write-up | changed configs, diagnosed failures, wrote the text |
+| Images | drew the two images in this README | — |
+
+More: [AI usage](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md).
 
 ----
 
-## 24. Repository map
+## 11. Repository map
 
 | Path | What |
 |---|---|
-| [src/](https://github.com/NotCleo/JS-PE/tree/main/src) | RTL (flat, as Tiny Tapeout requires), `config.json` for LibreLane, generated `jspe_isa.vh` |
-| [test/](https://github.com/NotCleo/JS-PE/tree/main/test) | top-level cocotb tests per protocol, `tb.v`, [test/unit/](https://github.com/NotCleo/JS-PE/tree/main/test/unit) block tests, IHP SRAM behavioural model |
-| [sw/](https://github.com/NotCleo/JS-PE/tree/main/sw) | assembler, ISS, ISA generator; [sw/tests/](https://github.com/NotCleo/JS-PE/tree/main/sw/tests) pytest and protocol models |
-| [formal/](https://github.com/NotCleo/JS-PE/tree/main/formal) | `.sby` scripts, property wrappers `fv_*.v`, [PLAN.md](https://github.com/NotCleo/JS-PE/blob/main/formal/PLAN.md), [RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md), mutants |
-| [host/](https://github.com/NotCleo/JS-PE/tree/main/host) | MicroPython host SDK and demos |
-| [docs/spec/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec) | normative spec: REQUIREMENTS, ARCH, ISA + isa.yaml, PINS, HOSTIF, VERIF_PLAN; [programs/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec/programs) |
-| [docs/](https://github.com/NotCleo/JS-PE/tree/main/docs) | reader docs (ARCHITECTURE, ISA_REFERENCE, HOST_INTERFACE, VERIFICATION, DESIGN_RATIONALE, CAPABILITY, PROGRAMS, INTERFACING, AI_USAGE, IR_DROP), [DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md), [info.md](https://github.com/NotCleo/JS-PE/blob/main/docs/info.md) (TT datasheet) |
-| [docs/history/](https://github.com/NotCleo/JS-PE/tree/main/docs/history) | architecture candidates, spec and RTL reviews |
-| [docs/ai/PROMPT-LIST/](https://github.com/NotCleo/JS-PE/tree/main/docs/ai/PROMPT-LIST) | the prompt list by phase |
-| [scripts/](https://github.com/NotCleo/JS-PE/tree/main/scripts) | area, formal summary, mutation, gate-level runner, test summary, AI usage |
-| [.claude/](https://github.com/NotCleo/JS-PE/tree/main/.claude) | Claude Code phase commands and subagents; [CLAUDE.md](https://github.com/NotCleo/JS-PE/blob/main/CLAUDE.md) rules |
-| [PROGRESS.md](https://github.com/NotCleo/JS-PE/blob/main/PROGRESS.md) | handoff state, sign-off record, area ledger |
-| [.github/workflows/](https://github.com/NotCleo/JS-PE/tree/main/.github/workflows) | GDS, test and docs CI from the template |
+| [src/](https://github.com/NotCleo/JS-PE/tree/main/src) | RTL (Verilog-2005) |
+| [test/](https://github.com/NotCleo/JS-PE/tree/main/test) | cocotb system tests and block tests |
+| [sw/](https://github.com/NotCleo/JS-PE/tree/main/sw) | assembler, simulator, ISA generator and their tests |
+| [formal/](https://github.com/NotCleo/JS-PE/tree/main/formal) | formal proofs and results |
+| [host/](https://github.com/NotCleo/JS-PE/tree/main/host) | MicroPython host library and demos |
+| [docs/spec/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec) | the spec and the example programs |
+| [docs/](https://github.com/NotCleo/JS-PE/tree/main/docs) | reader docs and the decision log |
+| [docs/history/](https://github.com/NotCleo/JS-PE/tree/main/docs/history), [docs/ai/](https://github.com/NotCleo/JS-PE/tree/main/docs/ai) | design-process records and the prompt list |
+| [.claude/](https://github.com/NotCleo/JS-PE/tree/main/.claude), [CLAUDE.md](https://github.com/NotCleo/JS-PE/blob/main/CLAUDE.md) | Claude Code rules, phase commands and subagents |
 
 ----
 
-## 25. Reproducing every result
+## 12. Future work
 
-| Claim | Command | Where the number is |
-|---|---|---|
-| lint clean | `make lint` | terminal |
-| 350 ISS/toolchain tests pass | `make swtest` | terminal |
-| 56 block tests pass | `make unit B=<module>` for arb, engine, fifo, lfsr, link, pins, sig | terminal |
-| 45/45 system tests | `make test` | `test/results.xml`, summary |
-| 45/45 at gate level | `make gl-fetch RUN=44625407065 && make gl-all` | summary (D122, D123) |
-| formal: 149 properties | `make formal B=<block>` for the 11 blocks | [formal/RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md) |
-| 211/213 mutants caught | `make mutate B=<block>` | formal/RESULTS.md, `formal/mutants/*.yaml` |
-| per-module area | `make area LIB=<sg13g2_stdcell_typ_1p20V_25C.lib>` | terminal; [docs/ARCHITECTURE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ARCHITECTURE.md) |
-| placed area, STA, DRC, LVS, precheck | GDS action, run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065) | run summary; PROGRESS sign-off record |
-| IR drop | hand calculation | [docs/IR_DROP.md](https://github.com/NotCleo/JS-PE/blob/main/docs/IR_DROP.md) |
-| a program's words and timing bounds | `python sw/jspe_asm.py --mem 128 <file.s>` | terminal, `.lst` |
-| UART/SPI/I2C rates | `make test`; full sweeps with `JSPE_UART_FULL=1`, `JSPE_SPI_FULL=1`, `JSPE_I2C_FULL=1` | test log (`test/last.log`) |
-| token use | `python scripts/ai_usage.py --sessions` | [docs/AI_USAGE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md) |
+- Retry the SRAM macro: 512 words instead of 128, and about 190k µm² back (estimate).
+- One CRC unit per engine, so two CRC protocols can run at once.
+- Deeper FIFOs, so running streams tolerate a busy host link for longer.
+- Capture and replay of pin traffic, for protocols nobody has written a program for yet.
+- USB low speed.
+- 32-bit shifts for long fields.
 
 ----
 
-## 26. Future work
+## 13. Acknowledgements and licence
 
-| Item | Why | What I know about the cost |
-|---|---|---|
-| SRAM macro retry | 512 words instead of 128: CAN next to UART TX + RX, larger tables | macro 45.3k µm² + 35 % halo = 61.2k placed vs the flop memory's 252.9k placed: ≈ 191.7k µm² freed (ARCH 11, at the x 1.56 placement factor; estimate); needs the LVS supply-name fix from commit 6896dd8 (VERIF_PLAN 9) |
-| Per-engine CRC | today one shared LFSR: two CRC protocols cannot run at once | 32-bit LFSR is 6 310 µm² synthesized; a 16-bit one per engine would be less (estimate not made) |
-| Deeper FIFOs | 4 entries per direction limit how long a running stream tolerates a busy host link (D088) | one 4x9 FIFO is 3 273 µm² synthesized |
-| Capture and replay | logic-analyser-style capture of pins into memory and timed replay, for protocols nobody wrote a program for | needs memory, so after the SRAM retry |
-| USB low speed | stretch goal of the brief; needs NRZI, bit stuffing, differential J/K on two `uio` pads, SE0 detection | not estimated |
-| Wide shift | S is 16 bits; 32-bit words and long CAN fields need two words today | not estimated |
-
-----
-
-## 27. Acknowledgements and licence
-
-- Jane Street for the competition and the shuttle; Tiny Tapeout and IHP for the template, the flow and the process; the open-source EDA tools this used (LibreLane/OpenROAD, Yosys, SymbiYosys, Icarus Verilog, Verilator, cocotb); Ken Pettit's IHP SRAM macro walkthrough, linked from the competition post; Anthropic's Claude (see [AI usage](#22-ai-assisted-workflow)).
+- Jane Street for the competition and the shuttle; Tiny Tapeout and IHP for the template, the flow and the process; the open-source EDA tools (LibreLane/OpenROAD, Yosys, SymbiYosys, Icarus Verilog, Verilator, cocotb); Ken Pettit's IHP SRAM macro walkthrough; Anthropic's Claude.
 - Licence: [Apache-2.0](https://github.com/NotCleo/JS-PE/blob/main/LICENSE).

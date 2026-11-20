@@ -1,4 +1,4 @@
-# PE — Programmable Protocol Emulator ASIC (Jane Street competition, Tiny Tapeout IHP)
+# Cleo — Programmable Protocol Emulator ASIC (Jane Street competition, Tiny Tapeout IHP)
 
 Goal: a reprogrammable protocol-emulator chip. Primary judging axis = running protocols NOT designed in.
 v1 scope: UART, SPI, I2C fully implemented + verified. Everything else is later.

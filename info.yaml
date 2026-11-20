@@ -1,6 +1,6 @@
 # Tiny Tapeout project information
 project:
-  title:        "JS-PE Programmable Protocol Emulator"      # Project title
+  title:        "Cleo Programmable Protocol Emulator"      # Project title
   author:       "NotCleo"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
   description:  "Reprogrammable protocol emulator (UART/SPI/I2C and beyond)"      # One line description of what your project does

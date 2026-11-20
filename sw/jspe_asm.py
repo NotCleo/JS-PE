@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# JS-PE assembler (ISA.md 9-10): multi-file, two-pass with label iteration, .hex/.bin/.lst, static arming bound.
+# Cleo assembler (ISA.md 9-10): multi-file, two-pass with label iteration, .hex/.bin/.lst, static arming bound.
 import os, re, sys, struct
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

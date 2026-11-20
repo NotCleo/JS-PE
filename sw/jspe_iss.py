@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# JS-PE cycle-accurate ISS (ISA.md, ARCH.md 4-9, HOSTIF.md). One step() = one clk.
+# Cleo cycle-accurate ISS (ISA.md, ARCH.md 4-9, HOSTIF.md). One step() = one clk.
 import os, sys
 from types import SimpleNamespace
 

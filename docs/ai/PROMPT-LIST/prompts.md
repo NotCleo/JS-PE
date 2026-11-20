@@ -1,4 +1,4 @@
-# JS-PE: prompts run in Claude Code, in order
+# Cleo: prompts run in Claude Code, in order
 
 Compiled from the planning chat that produced them, so this is the **intended** sequence. The exact text you typed (with your own edits) is in `docs/ai/prompts/`; where the two differ, that folder is authoritative.
 
