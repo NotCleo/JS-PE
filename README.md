@@ -41,7 +41,6 @@ I optimised for one thing: running protocols that were not designed in.
 
 ![](https://github.com/NotCleo/JS-PE/blob/main/docs/images/floorplan.jpeg?raw=true)
 
-*Author's drawing, simplified.*
 
 | Part | What it does |
 |---|---|
