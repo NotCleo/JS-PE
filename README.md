@@ -66,18 +66,17 @@
 
 | # | Section | What it covers |
 |---|---|---|
-| 22 | [AI-assisted workflow](#22-ai-assisted-workflow) | Stages, models, prompts, tokens |
-| 23 | [What went wrong](#23-what-went-wrong) | Failures and what each one changed |
-| 24 | [Human vs AI split](#24-human-vs-ai-split) | Who did what |
+| 22 | [AI-assisted workflow](#22-ai-assisted-workflow) | How I worked with Claude, stage by stage |
+| 23 | [Human vs AI split](#23-human-vs-ai-split) | Who did what |
 
 **Reference.**
 
 | # | Section | What it covers |
 |---|---|---|
-| 25 | [Repository map](#25-repository-map) | What is where |
-| 26 | [Reproducing every result](#26-reproducing-every-result) | Claim → command |
-| 27 | [Future work](#27-future-work) | What I would do next |
-| 28 | [Acknowledgements and licence](#28-acknowledgements-and-licence) | Credits, Apache-2.0 |
+| 24 | [Repository map](#24-repository-map) | What is where |
+| 25 | [Reproducing every result](#25-reproducing-every-result) | Claim → command |
+| 26 | [Future work](#26-future-work) | What I would do next |
+| 27 | [Acknowledgements and licence](#27-acknowledgements-and-licence) | Credits, Apache-2.0 |
 
 ----
 
@@ -197,7 +196,7 @@ All figures from GDS run [44625407065](https://github.com/NotCleo/JS-PE/actions/
 | Power (typ) | 19.5 mW |
 | Fmax | ≈ 53 MHz slow corner (estimate from 1.183 ns slack; no run at 16.7 ns) |
 
-The road there (runs 1–8) is in [section 23](#23-what-went-wrong) and [docs/VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) section 4.
+The road there (runs 1–8) is in [docs/VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) section 4.
 
 ----
 
@@ -490,62 +489,32 @@ Formal is per block, not per protocol: no protocol-level property is proven.
 
 ## 22. AI-assisted workflow
 
-I built this with Claude Code in seven days. The kit (CLAUDE.md rules, phase commands, subagents, scripts) and the phase plan were drafted with Claude in a claude.ai chat before the repo existed; everything after that is in Claude Code session logs on my machine. Full write-up, my decisions per stage and the token method: [docs/AI_USAGE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md).
+I built this with Claude Code in seven days. The working rules ([CLAUDE.md](https://github.com/NotCleo/JS-PE/blob/main/CLAUDE.md)), one slash command per phase ([.claude/commands/](https://github.com/NotCleo/JS-PE/tree/main/.claude/commands)) and the phase plan were drafted with Claude in a claude.ai chat before the repo existed.
 
-| Element | How |
+| Practice | What it meant |
 |---|---|
-| Phases as commands | one slash command per phase, procedure in [.claude/commands/](https://github.com/NotCleo/JS-PE/tree/main/.claude/commands); my prompt = the command + scope or decisions |
-| Files as memory | spec, DECISIONS.md (123 lines), PROGRESS.md handoff, a commit per subtask (204); sessions restarted often (usage limits, `/clear`) |
-| Stop and ask | spec ambiguities came back to me in ≤ 10 lines with a proposed fix; my answer became a DECISIONS line |
-| Subagents | `test-runner` (pass/fail only), `reviewer` (fresh-eyes review per block and protocol), `web-fetch` ([.claude/agents/](https://github.com/NotCleo/JS-PE/tree/main/.claude/agents)) |
-| Guard rails | area freeze and `rtl-freeze-v1`; one design step per response; no full GDS downloads |
+| Spec before code | spec → ISS → RTL; when the spec was unclear, Claude stopped and proposed a fix, and my answer became a DECISIONS line |
+| Files as memory | state lived in the spec, DECISIONS.md, PROGRESS.md and a commit per subtask, so a session could restart at any time |
+| Subagents | `test-runner` ran tests and returned pass/fail only; `reviewer` gave a fresh-eyes review of every block and protocol |
 
-Tokens come from [scripts/ai_usage.py](https://github.com/NotCleo/JS-PE/blob/main/scripts/ai_usage.py): it sums input, output, cache-write and cache-read tokens per API message (deduplicated by message id) from `~/.claude/projects/<repo>/*.jsonl` and the subagent logs, and assigns each message to a stage by timestamp between the stages' last commits. Totals are approximate; output includes thinking; the claude.ai chat is not counted. Prompts: [docs/ai/PROMPT-LIST/prompts.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md), the prompt sequence by phase with model, effort and mode per prompt, compiled from the planning chat.
+| Stage | Model | Result |
+|---|---|---|
+| 0 kit + plan | Claude (claude.ai chat) | rules, phase commands, subagents |
+| 1 requirements | Opus 5.5 | REQUIREMENTS, scope (D001–D008) |
+| 2 architecture + spec | Fable 5.2 | three candidates, REFLEX chosen; ARCH, ISA, PINS, HOSTIF, VERIF_PLAN |
+| 3 spec review | Fable 5.2 | REVIEW.md, ISA trim |
+| 4 assembler + ISS | Opus 5.5 | assembler, golden ISS, bus models |
+| 5 skeleton | Opus 5.5 | first GDS runs, flop memory build |
+| 6 RTL | Opus 5.5, Fable 5.2 | all blocks, engine in lockstep with the ISS |
+| 7 protocols | Opus 5.5 | 9 programs in lockstep |
+| 8 sign-off | Opus 5.5 | formal proofs, run 8 sign-off, GL 45/45, IR estimate |
+| 9 write-up | Opus 5.5 | this README and docs/ |
 
-| Stage | Model, effort, mode | Prompt (short form, full text linked) | Output / cache-read tokens | Outcome | My decision |
-|---|---|---|---|---|---|
-| 0 kit + plan | Claude (claude.ai chat) | — | not recorded (claude.ai chat, no usage export) | CLAUDE.md, agents, commands, scripts | process and rules |
-| 1 distill | Opus 5.5, high, acceptEdits | [`/phase1-distill` + my answers to §9](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-1-requirements) | 63k / 2.3M | REQUIREMENTS | D001–D008 scope |
-| 2a architecture | Fable 5.2, max | [`/phase2a-arch`](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-2a-architecture) | 169k / 3.8M | 3 candidates, REFLEX recommended | REFLEX with TDM fetch + latched events (D017–D021) |
-| 2b spec | Fable 5.2, max, acceptEdits | [`/phase2b-isa B`, resume](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-2b-full-spec-and-isa) | 833k / 19.9M | ARCH, ISA, PINS, HOSTIF, programs, VERIF_PLAN | UART timing criteria (D040) |
-| 3 review | Fable 5.2, max, acceptEdits | [phase 3 + five checks](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-3-adversarial-spec-review) | 470k / 9.6M | REVIEW.md | ISA trim, area rule (D048–D051) |
-| 4 ISS | Opus 5.5, high, auto | [phase 4 + test-first cases](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-4-assembler-and-golden-iss) | 529k / 74.5M | assembler, ISS, models | bound fix, stale-edge fix (D054–D057) |
-| 5 skeleton | Opus 5.5, high, auto | [`/phase5-skeleton`](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-5-walking-skeleton-through-the-tt-gds-flow) | 167k / 41.1M | GDS runs 1–4, flop build | macro last-attempt rule → flops (D062, D063) |
-| 6 RTL blocks | Opus 5.5 / Fable 5.2, high, plan → auto | [`/rtl-block <module>`](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-6-rtl-blocks) | 538k / 48.2M | all blocks, engine in lockstep | D070, D075, D079 |
-| 6b integration | Opus 5.5, max/high, auto | [integrate, timing triage, RTL review](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#integration-and-timing-closure) | 316k / 57.1M | run 5 green, RTL review | +1 clk pad fix (D081), area freeze (D083) |
-| 7 protocols | Opus 5.5, high, auto | [`/protocol uart`…, CAN in steps](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-7-protocol-bring-up) | 1.71M / 131.8M | 9 programs in lockstep | sound bound (D100), freeze tag, CAN correctness first |
-| 8a formal | Opus 5.5, max, auto | [`/phase8-signoff` formal](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-8-formal-verification) | 674k / 79.4M | 11 blocks proven, FP bug found | fix option for D109 |
-| 8b timing | Opus 5.5, high, auto | [flow runs with fallback rules](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-8-timing-and-area) | 62k / 10.5M | run 8 sign-off | D119–D121 |
-| 8c GL + IR | Opus 5.5, high, auto | [all 45 tests at gate level, IR](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#phase-8-gate-level-simulation-and-ir-drop) | 70k / 8.7M | GL 45/45, IR estimate | D123 |
-| 8d cleanup | Opus 5.5, medium | [template cleanup](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#cleanup-and-write-up) | 9k / 0.8M | template leftovers removed | — |
-| 9 write-up | Opus 5.5, xhigh, auto | [this README and docs/](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md#cleanup-and-write-up) | in progress | this page | answers to the TODO list |
-| **total (approx.)** | | | **5.7M / 502M** (+ 11.2M cache write) | | |
-
-The two images in this README ([floorplan](https://github.com/NotCleo/JS-PE/blob/main/docs/images/floorplan.jpeg), [Ethernet concept](https://github.com/NotCleo/JS-PE/blob/main/docs/images/ethernet_concept.jpeg)): diagrams drawn by the author; simplified.
+About 5.7M output tokens in total (approximate). Per-stage tokens, prompts and my decisions: [docs/AI_USAGE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md) and [docs/ai/PROMPT-LIST/prompts.md](https://github.com/NotCleo/JS-PE/blob/main/docs/ai/PROMPT-LIST/prompts.md).
 
 ----
 
-## 23. What went wrong
-
-| What | Found by | Effect / fix | D-IDs |
-|---|---|---|---|
-| GDS runs 1–2 failed PSM-0069 (IR-drop check could not trace the SRAM supply) | flow | PSM turned off; LVS became the power verdict; IR drop estimated by hand later | D060, D061 |
-| SRAM macro failed LVS on supply names (`VDD!` vs `VDD`) in run 3 | Netgen LVS | switched to 128 x 16 flops: 162k µm² synthesized, 36 % of the logic, and the reason CAN fills the memory | D062 |
-| Stale latched edges: the SPI target answered SCK edges seen while CS was high (26 of 84 cases) | ISS tests, Phase 4 | one-shot timer idiom forcing a waiting clock; general rule in ISA 4 | D055 |
-| Static bound wrong for non-uniform slot maps (a 13-clk path), later unsound (bound 6, measured 7) | ISS T1/T5, T6 sweep | formula fixed (D054); prefetch credited only by `.assume` (D100); several published limits tightened | D054, D100 |
-| Host link 26.7k µm² against a 23k cap | `make area` | three register merges to 23.8k; cap set to the measured block | D079 |
-| Setup failed by 1.17 ns in the slow corner (pin value → pad path, long weak nets) | GDS run 44184771880 | pads load the registered pin state: +1 clk on every pad, every program header updated | D081 |
-| I2C controller rate claim 0.89 MHz no longer true after D081 | lockstep | restated as 0.83 MHz measured | D056, D096 |
-| UART demo partner on the wrong RP2350 UART (GPIO24 is UART1 TX) | source check | PIO UART partner on the demo | D090 |
-| `-D CLK_HZ=…` silently ignored for SPI images | SPI review | unknown `-D` names are now an error | D092 |
-| Engine ran word 0 twice on `RUN` straight after reset (FP reset value) — after all 45 tests passed and after the RTL freeze | formal (seq fetch proof) | FP resets to 1; regression tests at ISS, RTL and formal; the one RTL change since the freeze | D109 |
-| Area-oriented synthesis and fanout limits broke timing (−4.983 ns, then −0.499 ns) | GDS runs 6, 7 | reverted to the run-5 configuration; area 57.3 % accepted | D119–D121 |
-| Mutation count reported as 46/49, actually 47/49 | re-count | corrected in PROGRESS | — |
-| Sessions hit usage limits mid-phase (Phases 2b, 4, 6) | — | WIP commits, `/resume` procedure, PROGRESS as handoff | — |
-
-----
-
-## 24. Human vs AI split
+## 23. Human vs AI split
 
 From DECISIONS.md and the prompts:
 
@@ -561,7 +530,7 @@ From DECISIONS.md and the prompts:
 
 ----
 
-## 25. Repository map
+## 24. Repository map
 
 | Path | What |
 |---|---|
@@ -581,7 +550,7 @@ From DECISIONS.md and the prompts:
 
 ----
 
-## 26. Reproducing every result
+## 25. Reproducing every result
 
 | Claim | Command | Where the number is |
 |---|---|---|
@@ -601,7 +570,7 @@ From DECISIONS.md and the prompts:
 
 ----
 
-## 27. Future work
+## 26. Future work
 
 | Item | Why | What I know about the cost |
 |---|---|---|
@@ -614,7 +583,7 @@ From DECISIONS.md and the prompts:
 
 ----
 
-## 28. Acknowledgements and licence
+## 27. Acknowledgements and licence
 
 - Jane Street for the competition and the shuttle; Tiny Tapeout and IHP for the template, the flow and the process; the open-source EDA tools this used (LibreLane/OpenROAD, Yosys, SymbiYosys, Icarus Verilog, Verilator, cocotb); Ken Pettit's IHP SRAM macro walkthrough, linked from the competition post; Anthropic's Claude (see [AI usage](#22-ai-assisted-workflow)).
 - Licence: [Apache-2.0](https://github.com/NotCleo/JS-PE/blob/main/LICENSE).
