@@ -2,7 +2,7 @@
 
 # Cleo: a programmable protocol emulator ASIC
 
-Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/): a Tiny Tapeout chip on IHP 130 nm that runs serial protocols as small programs instead of fixed hardware.
+Cleo is our entry to the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/): a Tiny Tapeout chip on IHP 130 nm that runs serial protocols as small programs instead of fixed hardware.
 
 - Four small engines each hold one instruction, `guard : operation`, and fire it in the clock its event arrives, so a pin edge becomes a pin change in 3–4 clocks.
 - Nothing protocol-specific is built in. UART, SPI and I2C were the brief; WS2812, Manchester and CAN 2.0A were added later with no RTL change.
