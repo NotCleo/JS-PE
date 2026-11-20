@@ -33,11 +33,9 @@ Jane Street asked for an open-source, general-purpose protocol emulator, "reprog
 
 The constraints: 8x4 Tiny Tapeout tiles, 24 I/O pins (only the 8 bidirectional ones can be open-drain), about 10 ns pad round trip, a clock from the RP2350 on the demo board, and a chip that loses its program when deselected, so the host must be able to reload it at any time.
 
-I optimised for one thing: running protocols that were not designed in.
-
 ----
 
-## 3. How it works
+## 3. Our Solution
 
 ![](https://github.com/NotCleo/JS-PE/blob/main/docs/images/floorplan.jpeg?raw=true)
 
