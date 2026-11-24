@@ -255,7 +255,7 @@ if { $::env(PDN_CORE_RING) == 1 } {
 
 # D128: one grid per hard macro, a strap on every supply column, extended to macro + halo where the straps above start.
 foreach jspe_inst $jspe_macros {
-    set jspe_grid "jspe_macro_[$jspe_inst getId]"
+    set jspe_grid "jspe_macro_[regsub -all {[^A-Za-z0-9_]} [$jspe_inst getName] _]"
     define_pdn_grid \
         -macro \
         -instances [$jspe_inst getName] \
