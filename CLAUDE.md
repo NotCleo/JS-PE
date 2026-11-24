@@ -60,3 +60,4 @@ If the spec is ambiguous or wrong: stop, state the problem + proposed fix in ≤
 - Don't implement beyond the task's "Done =" criteria. Don't refactor unrelated code.
 - Before calling a protocol done: run the `reviewer` subagent and fix its findings.
 - Never reason through a large design in one response. For any task with design + implementation, first write a short design note to a file and commit it, then implement in steps of ≤1 file or ≤1 feature per response.
+- Never wait with pgrep -f / until-grep polling loops. Run tests in the foreground with timeout, or wait on a PID with `wait`/`tail --pid`.
