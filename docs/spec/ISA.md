@@ -1,4 +1,4 @@
-# ISA — Cleo REFLEX instruction set (Phase 2b, 2026-11-15)
+# ISA — Cleo instruction set (Phase 2b, 2026-11-15)
 
 Machine-readable twin: `isa.yaml` (assembler, ISS and `src/jspe_isa.vh` are generated from it; if the two disagree, `isa.yaml` wins and this file is fixed).
 Timing, slots, prefetch and the per-clock rule list: ARCH.md 4–6. Notation: `<-` is an update at the end of the clock in which the instruction fires; `sext`/`zext` extend to 16 bits; addresses are 9 bits and wrap.

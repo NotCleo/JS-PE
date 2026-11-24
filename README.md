@@ -53,6 +53,8 @@ I optimised for one thing: running protocols that were not designed in.
 
 Instructions are 16 bits wide: 67 of them in 6 formats, covering pin actions, branches, arithmetic, host streams, and timer and shifter control.
 
+Code identifiers use the prefix jspe_ (the project's working name); the chip is Cleo.
+
 Why this shape:
 
 - A fixed hardware lane per protocol family only serves the protocols I anticipated, and a single CPU runs out of reaction time once two protocols run together.

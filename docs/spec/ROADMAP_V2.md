@@ -1,4 +1,4 @@
-# JS-PE v2 roadmap: USB LS, 10BASE-T, and architecture improvements
+# Cleo v2 roadmap: USB LS, 10BASE-T, and architecture improvements
 
 Handoff from a separate analysis chat (2026-11-24). Every number below was checked against this repo (CAPABILITY.md, manchester.s, can.s, ISA.md, ARCH.md, DECISIONS D062–D064/D081/D090) or comes from my own SPICE simulation. Deadline: 18 Jan 2027.
 

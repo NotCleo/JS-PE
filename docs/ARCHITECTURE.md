@@ -2,6 +2,8 @@
 
 This is the reader's version of the architecture. The normative text, with every per-clock rule, is [docs/spec/ARCH.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/ARCH.md); where this page and the spec differ, the spec wins. Section numbers in brackets (ARCH 4.2) point into it.
 
+Code identifiers use the prefix jspe_ (the project's working name); the chip is Cleo.
+
 ## 1. The idea in one paragraph
 
 Four identical engines (E0–E3) run 16-bit `guard : operation` instructions from one shared 128 x 16 program memory. An engine holds one *armed* instruction and waits until its guard (a pin edge, a timer event, a FIFO level, a condition) is true; the whole operation then happens in that clock. Nothing protocol-specific is in hardware: the hardware gives events, a timer, a shifter with taps, an ALU, pin actions and byte FIFOs to the host, and the program decides what a "bit", a "frame" or an "acknowledge" is. The reaction from a pad edge to a pad change is 3–4 clk + pad (70–90 ns at 50 MHz) with no instruction fetch in between (ARCH 4.1, D081).

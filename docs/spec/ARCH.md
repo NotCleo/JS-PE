@@ -1,4 +1,4 @@
-# ARCH — Cleo "REFLEX" architecture (Phase 2b, 2026-11-15)
+# ARCH — Cleo architecture (Phase 2b, 2026-11-15)
 
 Candidate B of docs/history/ARCH_CANDIDATES.md with D017–D021 and the 2b decisions D022–D034. Where this file and docs/history/ARCH_CANDIDATES.md differ, this file wins.
 Instruction semantics and programmer-visible registers: ISA.md. Host protocol: HOSTIF.md. Pads: PINS.md.

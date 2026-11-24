@@ -1,4 +1,4 @@
-# Cleo REFLEX ISA, machine-readable. Single source for sw/gen_isa.py (assembler, ISS, src/jspe_isa.vh).
+# Cleo ISA, machine-readable. Single source for sw/gen_isa.py (assembler, ISS, src/jspe_isa.vh).
 # Prose and semantics: ISA.md. Host constants: HOSTIF.md. Bit ranges are [msb, lsb].
 version: 1
 word_bits: 16

@@ -24,7 +24,7 @@ The decisions that shaped the chip, what I rejected, and why. Every decision has
 
 ### 2.1 Reactive engines (D009, D017)
 
-The judging axis is protocols that were not designed in. LANES would have been fast for the protocols whose bit lanes I built and useless for the rest; CONDUCTOR puts every bit through one CPU and runs out of reaction time once two protocols run. An eFPGA fabric did not fit the area. REFLEX makes the *wait* the instruction: an engine sits on one armed instruction and acts in the clock its event arrives, so the reaction is 3–4 clk + pad (ARCH 4.1) no matter what the protocol is. Everything protocol-specific is a program, which is what let WS2812, Manchester and CAN run later with no RTL change.
+The judging axis is protocols that were not designed in. LANES would have been fast for the protocols whose bit lanes I built and useless for the rest; CONDUCTOR puts every bit through one CPU and runs out of reaction time once two protocols run. An eFPGA fabric did not fit the area. Cleo makes the *wait* the instruction: an engine sits on one armed instruction and acts in the clock its event arrives, so the reaction is 3–4 clk + pad (ARCH 4.1) no matter what the protocol is. Everything protocol-specific is a program, which is what let WS2812, Manchester and CAN run later with no RTL change.
 
 ### 2.2 Time-division memory (D018, D025, D027)
 

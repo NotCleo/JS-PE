@@ -1,4 +1,4 @@
-# MicroPython host side of the JSPE link (HOSTIF.md): .bin loader with read-back, stream send / receive.
+# MicroPython host side of the Cleo host link (HOSTIF.md): .bin loader with read-back, stream send / receive.
 import struct
 import time
 

@@ -3,7 +3,7 @@
 Three candidate architectures.
 None is modelled on RP2040 PIO or TI PRU. All numbers are pre-synthesis estimates (cells ±30 %) unless marked *measured*.
 Two figures in §§0–8 are superseded by §9: the flop fallback is ≈ 7.7K cells (not 4.8K) and the host link is capped at 1.0K cells (not 0.6K).
-**Approved 2026-11-15: Candidate B (REFLEX) with the changes in §10** (time-division fetch with prefetch, latched events). §2, §5, §7 and §8 were edited to match; where an older section and §10 differ, §10 wins.
+**Approved 2026-11-15: Candidate B (Cleo) with the changes in §10** (time-division fetch with prefetch, latched events). §2, §5, §7 and §8 were edited to match; where an older section and §10 differ, §10 wins.
 
 ## 0. Common ground
 
@@ -121,7 +121,7 @@ Lineage: a programmable serializer/framer. Hardware moves bits; software moves f
 
 ---
 
-## 2. Candidate B — REFLEX: reactive engines, every instruction guarded
+## 2. Candidate B — Cleo: reactive engines, every instruction guarded
 
 Lineage: synchronous reactive languages (await / abort-when / parallel threads), applied to pins. The unit of programming is "when this event happens, do this, in that same clock cycle".
 
@@ -273,7 +273,7 @@ A std-cell LUT4+FF site with muxed routing costs ≈ 60 configuration flops plus
 
 ## 5. Stress-case matrix
 
-| Case | A LANES | B REFLEX | C CONDUCTOR |
+| Case | A LANES | B Cleo | C CONDUCTOR |
 |---|---|---|---|
 | I2C target + stretch, 400 kHz | yes (stretch designed in) | yes (watchers + fused hold) | yes |
 | I2C controller arbitration | yes (designed in) | yes (condition cell) | yes (software) |
@@ -297,7 +297,7 @@ A std-cell LUT4+FF site with muxed routing costs ≈ 60 configuration flops plus
 | Write-up story ×1 | 3 | 5 | 3 | B programs read like the protocol's timing description; the ISS is the executable semantics |
 | **Weighted total** | **27** | **38** | **29** | |
 
-## 7. Recommendation: Candidate B (REFLEX)
+## 7. Recommendation: Candidate B (Cleo)
 
 1. It is the only candidate where a protocol nobody anticipated costs nothing extra: bit-level behaviour is instructions, yet the response to an edge is as fast as dedicated hardware because the waiting instruction is the armed response.
 2. It meets every MUST and reaches the SHOULD rates (SPI target 4 MHz, controller 12.5 MHz, UART 3 Mbaud) without protocol-specific blocks; margins and conditions after the approval changes are in §10.5. CAN and USB LS at bit/packet level need no dedicated hardware.
@@ -321,7 +321,7 @@ Deliberately left out of v1: parallel 2/4-bit shift (Dual/Quad SPI), 10 Mbit Man
 
 ## 9. Adjustments before approval (2026-11-14; they describe B before the changes of §10)
 
-The choice stands: **Candidate B (REFLEX)**. Adjustments:
+The choice stands: **Candidate B (Cleo)**. Adjustments:
 
 1. Fallback memory cost 4.8K → 7.7K cells (≈ 3.7 mapped cells/bit, not 2.3). Totals with fallback: A 17.5K, B 19.1K, C 14.4K. Logic cap for B tightens to ≤ 14K placed cells.
 2. Host link budget 0.6K → 1.0K hard cap: load, read-back, stream mux, halt/run/step, register read. Anything more needs a DECISIONS line. B becomes 9.1K synth ≈ 11.4K placed.
@@ -332,7 +332,7 @@ The choice stands: **Candidate B (REFLEX)**. Adjustments:
 
 ## 10. Approval and changes (2026-11-15)
 
-The user approved Candidate B (REFLEX) with the changes below (D017–D020). Where an older section and this one differ, this one wins.
+The user approved Candidate B (Cleo) with the changes below (D017–D020). Where an older section and this one differ, this one wins.
 
 ### 10.1 Confirmed as proposed
 4 engines; one 1P 512x16 macro with the 128x16 flop fallback; host link H1 on 3 pins (H_RX, H_TX, H_RDY); the v1 exclusions of §7; D011–D016. The 16-bit vs 8-bit data path is settled in 2b with numbers (paper-program sizes, cells per engine, Fmax).
