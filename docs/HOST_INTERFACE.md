@@ -86,6 +86,8 @@ Pads are enabled only after initialisation, so no pad drives a wrong level while
 | Host → FIFO latency | 9.5 B + 3 clk after the start bit (155 / 79 / 41 clk) |
 | FIFOs | 4 bytes each way per engine; H_RDY keeps 2 entries in reserve, so no host byte is lost |
 
+**Replies hold the chip → host link.** A reply (`RDMEM`, `RDREG`, `SYNC`) is sent before any stream byte, so engines that push without waiting must not lose bytes behind it. For a program whose receiver pushes at line rate (USB LS, CAN), the host sends no command with a reply while the bus is active. USB LS measured: one 4-byte `RDREG` reply at a packet tail overflowed the 4-entry FIFO at 16 clk per bit (usb_ls_design.md §9). Line levels are read on the RP2350's own GPIOs instead: the demo board wires every ASIC pin to the RP2350, and those GPIOs stay inputs with no pulls while the chip drives the pins.
+
 ## 8. Host SDK (`host/jspe.py`)
 
 | Call | Does |

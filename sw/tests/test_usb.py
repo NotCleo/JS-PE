@@ -29,11 +29,13 @@ def bus(c, host, t, clash):
 def run(c, host, n, link_b=None):
     # link_b: model the chip->host link at bit time B clk (10 B per data byte, 20 B per event, +2 bytes at start)
     log, clash, occ = [None] * c.cycle, [], 0                  # log index = cycle
+    c.oelog = [0] * c.cycle
     free, seen = 2 * 10 * link_b if link_b else 0, 0
     for _ in range(n):
         t = c.cycle
         st = bus(c, host, t, clash)
         log.append(st)
+        c.oelog.append(c.uio_oe)
         if link_b:
             c.tx_block[ERX] = t < free
         c.step(0x08, st[0] << 4 | st[1] << 5)

@@ -893,3 +893,14 @@ def usb_decode(log, bit, t_from=0):
         out.append((t0, te, by, ok))
         t = te
     return out
+
+
+def usb_crc_preset(pid):
+    # LFSR start value that becomes 0xFFFF after the transmitter shifts SYNC | PID << 8 (16 bits, LSB first)
+    word = 0x80 | pid << 8
+    s = 0xFFFF
+    for i in reversed(range(16)):
+        fb = s >> 15 & 1
+        t = s ^ (0xA001 if fb else 0)
+        s = (t << 1 | (fb ^ (word >> i & 1))) & 0xFFFF
+    return s
