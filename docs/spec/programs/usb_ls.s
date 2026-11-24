@@ -12,6 +12,8 @@
 .equ CLK_HZ, 48000000
 .equ BIT,    CLK_HZ / 1500000   ; 32 clk per bit
 .equ OWNCHK, 1                  ; 1: NAK only INs to our address; 0: NAK every IN not armed (-7 words)
+.equ PIDCHK, 0                  ; 1: SETUP/OUT and DATA PIDs checked exactly (+8 words; fits with OWNCHK 0: 128)
+.assert (PIDCHK & OWNCHK) == 0, "PIDCHK 1 needs OWNCHK 0 (128 words)"
 .equ G_ACK,  0                  ; E_RX -> E_TX: send ACK
 .equ G_NAK,  1                  ; send NAK
 .equ G_DAT,  2                  ; send the IN buffer
@@ -170,7 +172,13 @@ eop:    rcfg  R0, LFSR_LO               ; residual or token key
         li    R2, #0
         cmp   R1, #0x69
         jz    ein
-        ld    R2, [S]                   ; SETUP / OUT (and keep-alive: no match)
+.if PIDCHK
+        cmp   R1, #0x2D
+        jz    eout
+        cmp   R1, #0xE1
+        jnz   hunt                      ; corrupted PID, keep-alive
+.endif
+eout:   ld    R2, [S]                   ; SETUP / OUT (PIDCHK 0: also any other PID and keep-alive; no match)
         cmp   R2, R0
         li    R2, #0
         jnz   hunt
@@ -180,6 +188,13 @@ eop:    rcfg  R0, LFSR_LO               ; residual or token key
 
 edat:   push  R2                        ; token PID closes the packet
         li    R2, #0
+.if PIDCHK
+        cmp   R1, #0xC3
+        jz    edpid
+        cmp   R1, #0x4B
+        jnz   ecrc                      ; not a DATA PID: no ACK
+edpid:
+.endif
         li    R1, #0xB001
         cmp   R1, R0
         jnz   ecrc

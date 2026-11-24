@@ -38,7 +38,7 @@ def in_txn(c, host, ep, after=160):
     return transaction(c, host, usb_token("IN", ADDR, ep), after=after)
 
 
-DATAS = [("DATA1", []), ("DATA0", [0x05]), ("DATA1", list(range(1, 8))), ("DATA0", [0x12, 0x01, 0x10, 0x01, 0, 0, 0, 8]),
+DATAS = [("DATA1", []), ("DATA0", [0x05]), ("DATA0", [0xF9]), ("DATA1", list(range(1, 8))), ("DATA0", [0x12, 0x01, 0x10, 0x01, 0, 0, 0, 8]),
          ("DATA1", [0xFF] * 8), ("DATA0", [0x00] * 8), ("DATA1", [0x7E, 0xFF, 0x01, 0xFC])]
 
 
@@ -138,3 +138,68 @@ def test_usb_bound_vs_iss(own):
                 if s["bound"] is None or s["measured"] > s["bound"] or s["target"] != s["next"] or s["miss"]:
                     bad.append((phase, e, hex(s["g"]), s["measured"], s["bound"]))
     assert n > 1000 and not bad, (n, bad[:8])
+
+
+@pytest.mark.parametrize("own,pc", [(1, 0), (0, 0), (0, 1)])
+def test_usb_tx_corrupted_in_pid(own, pc):
+    # IN with PID 0x68 while EP0 is armed. PIDCHK 1: ignored, buffer kept. PIDCHK 0: the chip disarms and the
+    # host's retried IN is taken as data (EV_CRC, closing byte 0x68, not SETUP/OUT): the RP2350 re-arms
+    c, host, img = setup(own, pidchk=pc)
+    arm(c, img, 0, "DATA1", PAY)
+    tok = usb_token("IN", ADDR, 0)
+    tok[0] = 0x68
+    log, clash, _ = transaction(c, host, tok, after=40)
+    assert chip_packets(log, host) == []
+    log, clash, _ = in_txn(c, host, 0)
+    resp = [p[2] for p in chip_packets(log, host)]
+    if pc:
+        assert resp == [usb_data("DATA1", PAY)] and stream(c) == []
+        return
+    st = stream(c)
+    assert resp == [] and st[-2:] == [0x68, 0x102] and c.mem[img.label("keys") + 1] == 0
+    arm(c, img, 0, "DATA1", PAY)                                       # the RP2350 rule
+    log, clash, _ = in_txn(c, host, 0)
+    assert [p[2] for p in chip_packets(log, host)] == [usb_data("DATA1", PAY)]
+
+
+@pytest.mark.parametrize("own,pc", [(1, 0), (0, 1)])
+def test_usb_tx_host_ack_after_2_bits(own, pc):
+    # host ACK 2 bit times after the chip's DATA EOP (SE0 -> J): E_RX is hunting again in time
+    c, host, img = setup(own, pidchk=pc)
+    arm(c, img, 0, "DATA1", [0xF9])
+    host.packet(usb_token("IN", ADDR, 0), t=c.cycle + 20 * BIT)
+    full, seen = [None] * c.cycle, False
+    while True:
+        lg, _, _ = run(c, host, 8)
+        full += lg[len(full):]
+        d = bool(c.oelog[-1] & 0x30)
+        if seen and not d:
+            break
+        seen |= d
+    resp = chip_packets(full, host)
+    assert [p[2] for p in resp] == [usb_data("DATA1", [0xF9])] and resp[0][3]
+    te = resp[0][1]
+    host.packet([USB_PID["ACK"]], t=te + 2 * BIT)
+    run(c, host, 40 * BIT)
+    assert stream(c) == [0x103] and c.mem[img.label("keys") + 1] == 0
+
+
+@pytest.mark.parametrize("phase", PHASES)
+def test_usb_tx_slow_edges(phase):
+    # E_TX reads D+ back for its NRZI state: the line as seen by the chip delayed 10 clk (208 ns: a 300 ns LS edge
+    # crosses mid-swing after ~150 ns). Measured limit: 12 clk passes, 14 fails.
+    from models import usb_decode
+    from test_usb import bus
+    for data in ([0x00] * 8, [0xFF] * 8, [0xF9]):
+        c, host, img = setup(1, phase=phase)
+        arm(c, img, 0, "DATA1", data)
+        host.packet(usb_token("IN", ADDR, 0), t=c.cycle + 20 * BIT)
+        log = [None] * c.cycle
+        for _ in range(200 * BIT):
+            st = bus(c, host, c.cycle, [])
+            log.append(st)
+            seen = log[-11] if log[-11] is not None else st
+            c.step(0x08, seen[0] << 4 | seen[1] << 5)
+        t0 = next(k for k, v in enumerate(log) if v is not None)
+        r = [p for p in usb_decode(log, BIT, t0) if host.state(p[0]) is None]
+        assert [p[2] for p in r] == [usb_data("DATA1", data)] and r[0][3]

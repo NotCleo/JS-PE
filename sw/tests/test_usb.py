@@ -8,8 +8,8 @@ BIT = 32
 ADDR = 5
 
 
-def setup(own=1, addr=ADDR, bit=BIT, phase=0):
-    img = prog("usb_ls", OWNCHK=own)
+def setup(own=1, addr=ADDR, bit=BIT, phase=0, pidchk=0):
+    img = prog("usb_ls", OWNCHK=own, PIDCHK=pidchk)
     c = boot(img, phase)
     k = img.label("keys")
     c.mem[k], c.mem[k + 1], c.mem[k + 2] = usb_key(addr, 0), 0, usb_key(addr, 1)
@@ -104,7 +104,7 @@ def test_usb_rx_keepalive_ignored(own):
     assert stream(c)[-2:] == [USB_PID["SETUP"], 0x101] and len(chip_packets(log, host)) == 1
 
 
-STUFFY = [[0xFF] * 8, [0x7F, 0xFE, 0x3F, 0xFC, 0xFF, 0x01, 0xFF, 0x80], [0xFE, 0xFF, 0xFF, 0x7F]]
+STUFFY = [[0xF9], [0xFF] * 8, [0x7F, 0xFE, 0x3F, 0xFC, 0xFF, 0x01, 0xFF, 0x80], [0xFE, 0xFF, 0xFF, 0x7F]]
 
 
 @pytest.mark.parametrize("own", [1, 0])
@@ -145,3 +145,55 @@ def test_usb_rx_in_unarmed(own, addr, ep):
     resp = [p[2] for p in chip_packets(log, host)]
     ours = addr == ADDR
     assert resp == ([[USB_PID["NAK"]]] if ours or not own else []) and stream(c) == [] and not clash
+
+
+VARIANTS = [(1, 0), (0, 0), (0, 1)]                                   # (OWNCHK, PIDCHK)
+
+
+@pytest.mark.parametrize("own,pc", VARIANTS)
+def test_usb_rx_stray_ack_and_bad_crc5(own, pc):
+    c, host, _ = setup(own, pidchk=pc)
+    log, clash, _ = transaction(c, host, [USB_PID["ACK"]])
+    tok = usb_token("SETUP", ADDR, 0)
+    tok[2] ^= 0x08                                                     # CRC5 bit flipped
+    log2, clash2, _ = transaction(c, host, tok, usb_data("DATA0", PAY))
+    assert stream(c) == [] and chip_packets(log, host) == [] and chip_packets(log2, host) == []
+
+
+@pytest.mark.parametrize("own,pc", VARIANTS)
+def test_usb_rx_min_interpacket_gap(own, pc):
+    # token -> DATA 2 bit times apart (the host's minimum)
+    c, host, _ = setup(own, pidchk=pc)
+    pkt = usb_data("DATA0", PAY)
+    log, clash, _ = transaction(c, host, usb_token("SETUP", ADDR, 0), pkt, gap=2)
+    assert stream(c) == pkt + [USB_PID["SETUP"], 0x101]
+    assert [p[2] for p in chip_packets(log, host)] == [[USB_PID["ACK"]]]
+
+
+@pytest.mark.parametrize("own,pc", VARIANTS)
+def test_usb_rx_corrupted_data_pid(own, pc):
+    # DATA with PID 0xC2 (check nibble wrong): PIDCHK 1 ignores it; PIDCHK 0 ACKs it and the RP2350 sees the bad PID
+    c, host, _ = setup(own, pidchk=pc)
+    pkt = usb_data("DATA0", [0x02])
+    pkt[0] = 0xC2
+    log, clash, _ = transaction(c, host, usb_token("OUT", ADDR, 0), pkt)
+    resp = [p[2] for p in chip_packets(log, host)]
+    if pc:
+        assert resp == [] and stream(c) == pkt + [USB_PID["OUT"], 0x102]
+    else:
+        assert resp == [[USB_PID["ACK"]]] and stream(c) == pkt + [USB_PID["OUT"], 0x101]
+
+
+@pytest.mark.parametrize("own,pc", VARIANTS)
+def test_usb_rx_reset_mid_transaction(own, pc):
+    # SETUP token, then a bus reset instead of its DATA: the reset's SE0 closes the pending data packet as
+    # EV_CRC (token PID, no bytes), so the next SETUP works at once
+    c, host, _ = setup(own, pidchk=pc)
+    transaction(c, host, usb_token("SETUP", ADDR, 0))
+    host.t = max(host.t, c.cycle)
+    host._seg(1500 / BIT, USB_SE0)
+    host._seg(1, USB_J)
+    pkt = usb_data("DATA0", PAY)
+    log, _, _ = transaction(c, host, usb_token("SETUP", ADDR, 0), pkt)
+    assert [p[2] for p in chip_packets(log, host)] == [[USB_PID["ACK"]]]
+    assert stream(c) == [USB_PID["SETUP"], 0x102] + pkt + [USB_PID["SETUP"], 0x101]

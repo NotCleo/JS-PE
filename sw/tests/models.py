@@ -888,6 +888,7 @@ def usb_decode(log, bit, t_from=0):
                 continue
             data.append(b)
             run = run + 1 if b else 0
+        ok &= run != 6                                     # six 1s before the EOP need their stuff bit too
         ok &= data[:8] == [0] * 7 + [1] and (len(data) - 8) % 8 == 0
         by = [sum(data[8 + 8 * j + i] << i for i in range(8)) for j in range((len(data) - 8) // 8)]
         out.append((t0, te, by, ok))

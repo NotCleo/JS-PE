@@ -6,13 +6,13 @@ Scope: USB 2.0 LS device; demo = HID keyboard (EP0 + EP1 interrupt IN). Pmod: RO
 - Pads: uio4 = D+ ← E0.p0; uio5 = D− ← E0.p1 with pad `inv`; uio6 = pull-up ← E0.p2 (`p2 <- 1` in `.init` = attach; detach = host clears PAD `en`).
 - One E instruction per state (A on p0, B on p1): **J** (LS idle: D+ 0, D− 1) `p0 <- 0, p1 <- 0`; **K** `p0 <- 1, p1 <- 1`; **SE0** `p0 <- 0, p1 <- 1`. Both pads change in the same clock.
 - Release: `p0 <- z`, then `p1 <- z` (B has no `z`); both lines are at J levels, so the skew is harmless.
-- E_RX binds: p0 = uio_in[4] (D+, shift input), p1 = uio_in[5] (D−), p2 = G_TXB. E_TX binds p3 = uio_in[4] (line state). `.filter uio4, uio5` removes crossover SE0 glitches.
+- E_RX binds: p0 = uio_in[4] (D+, shift input), p1 = uio_in[5] (D−), p2 = G_TXB. E_TX binds p3 = uio_in[4] (line state). `.filter uio4, uio5` rejects SE0 pulses < 62.5 ns only; USB allows crossover SE0 up to 210 ns at LS (TLST), so a slow, low crossover could fire the EOP watcher mid-packet. **Hardware check item**; fallback: a USB transceiver with SE0 filtering on the Pmod (0 words; a chip-side delayed check costs ≥ 5 words).
 
 ## 2. Bit timing
 - `CLK_HZ` 48 MHz (D126), BIT = 32 clk, P = 31, frac 0.
 - E_RX: timer hard sync on both edges of p0 (TCFG `sedge` 3, `spin` p0): every NRZI transition re-times the grid. Tock at mid-bit, 16 clk after the synchronized edge.
 - Drift: ≤ 7 bits between transitions (stuffing); host and device ±1.5 % each: 7 × 32 × 0.03 = 6.7 clk + ≤ 3 clk edge jitter vs a 16-clk half bit.
-- E_TX: own periodic grid, `tsync` per packet, no auto-sync; tock 4 clk after each tick = decision point for the next bit.
+- E_TX: own periodic grid, `tsync` per packet, no auto-sync; the next bit is decided between ticks (no tock).
 
 ## 3. RX path (E_RX)
 - SHCFG: WL 8, LSB first, `diff` + `inv` (NRZI: no transition = 1). TAPCFG `rl` 6, `r1` 1, `lfen`. WL never changes inside a packet (an SHCFG write zeroes RUN).
@@ -26,7 +26,7 @@ Scope: USB 2.0 LS device; demo = HID keyboard (EP0 + EP1 interrupt IN). Pmod: RO
 
 ## 4. TX path (E_TX) and turnaround
 - SHCFG WL 16, LSB first; TAPCFG `rl` 6, `r1` 1, `alt` 2, `lfen`. A handshake is one word: SYNC | PID << 8 (ACK 0xD280, NAK 0x5A80).
-- Per bit: `p3 <- out` (bit → B, RUN, LFSR); `jb` hold; else `jhi p3` picks `@tick` J or K; after the tick `jrun` → `p3 <- q` (stuff 0) + forced transition. Static bound tick → next tick guard ≤ 29 clk of 32.
+- Per bit: `p3 <- out` (bit → B, RUN, LFSR); `jb` hold; else `jhi p3` picks `@tick` J or K; after the tick `jrun` → `p3 <- q` (stuff 0) + forced transition. Static bound tick → next tick guard ≤ 29 clk of 32. The J/K choice reads D+ back (`jhi p3`) ~16 clk after the last drive: tested with the chip's view of the line delayed up to 12 clk (250 ns) beyond pad + synchronizer + filter; LS edges cross mid-swing within ~150 ns.
 - DATA *(s2)*: IN buffer [total bits 32 + 8n, CRC preset, SYNC | PID, data]; the preset (one constant per DATA0/DATA1, written by the RP2350) makes the LFSR 0xFFFF after word 0, because that boundary has no free clock. At R1 = 16: S ← LFSR ^ 0xFFFF (CRC16, also mid-word for odd n). EOP: `@tick` SE0, SE0, J, release.
 - *(s2)* STALL = a buffer of 16 bits [16, –, SYNC | STALL]: no flag needed.
 - Turnaround: E_RX waits for the SE0→J edge (`@rise p1`, latched if early), then `sset` G_ACK, G_NAK or G_DAT. E_TX (`@c0` = G_ACK | G_NAK, watcher 1 on G_DAT) clears all three, `sset` G_TXB, `tsync`, first K on the second tick: ≈ 3 bits (handshake) to 3.7 bits (DATA) after EOP. Window 2–6.5 bits (detachable cable; host timeout 16).
@@ -47,7 +47,7 @@ Right form, POLY 0xA001, LFSR_HI 0, set in `.init`; both engines set `lfen`. Hal
 | Buffer + keys | 11 | 10 |
 | Total | 109 | **127 / 128**; `-D OWNCHK=0`: **120** |
 
-Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7). SRAM build: OWNCHK 1, two buffers.
+Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7; it also NAKs INs for other LS devices behind the same hub, which collides there). Options: `-D OWNCHK=0 -D PIDCHK=1` = 128 words with exact SETUP/OUT and DATA PID checks (+8). SRAM build: OWNCHK 1 + PIDCHK 1, two buffers.
 
 ## 8. Possibly RTL (flag only)
 1. No toggle in action A, no `z` in B: NRZI TX needs the per-bit branch (21 words).
@@ -55,8 +55,8 @@ Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispat
 3. FIFO depth 4 and no flow control toward the host (section 9).
 
 ## 9. Host rules (step 2)
-1. **Keep-alive** (SE0 2 bits + J every ms) has no K, so no SYNC: only watcher 0 fires; R1 = 0xFFFF ("no packet") falls to the SETUP/OUT path, whose key compare fails, so nothing is answered (tested: 3 keep-alives reach `eop`, no byte, no handshake, the next SETUP works). **Bus reset** (SE0 ≥ 10 ms) takes the same path. The RP2350 detects it on its own GPIOs wired to uio4/uio5 (demo board, confirmed; inputs, no pulls): SE0 on two reads ≥ 3 µs apart (keep-alive SE0 is 1.33 µs), then it writes address-0 keys and BUFKEY 0. Not by `RDREG PINS`: its 4-byte reply holds H_TX, and at a packet tail that overflowed the FIFO (1 of 108 offsets swept at B = 16). Limitation: a key equal to 0, 0xFFFF, 0xB001 or the LFSR state after a NAK aliases (≈ 2⁻¹⁴ per address).
-2. **SET_ADDRESS**: the status stage is an IN at address 0 answered from a zero-length DATA1 buffer. Only on its EV_INACK does the RP2350 write the new KEY0/KEY1 (one WRMEM), well inside the host's 2 ms recovery. A lost host ACK leaves the chip at address 0, where the host's retry is sent.
+1. **Keep-alive** (SE0 2 bits + J every ms) has no K, so no SYNC: only watcher 0 fires; R1 = 0xFFFF ("no packet") falls to the SETUP/OUT path, whose key compare fails, so nothing is answered (tested: 3 keep-alives reach `eop`, no byte, no handshake, the next SETUP works). **Bus reset** (SE0 ≥ 10 ms) takes the same path. The RP2350 detects it on its own GPIOs wired to uio4/uio5 (demo board, confirmed; inputs, no pulls): SE0 on every read of a ≥ 2.5 µs window with reads < 1.3 µs apart, e.g. 3 reads 1.25 µs apart (keep-alive SE0 is 1.33 µs; two EOPs are ≥ 13.8 µs apart, so sparse polls could join two of them), or SE0 timed by PIO, then it writes address-0 keys and BUFKEY 0. Not by `RDREG PINS`: its 4-byte reply holds H_TX, and at a packet tail that overflowed the FIFO (1 of 108 offsets swept at B = 16). Key aliasing: checked for all 128 × 16 (address, endpoint): keys distinct, none equal to 0, 0xFFFF, 0xB001, and no post-NAK LFSR state equals KEY0 — no real address is affected.
+2. **SET_ADDRESS**: the status stage is an IN at address 0 answered from a zero-length DATA1 buffer. Only on its EV_INACK does the RP2350 write the new KEY0/KEY1 (one WRMEM), well inside the host's 2 ms recovery. Limitation: if the host's ACK is corrupted on the wire, the host has finished the status stage and moves to the new address while the chip stays at 0; the host's retries at the new address fail and it resets the port, which recovers (keys back to address 0).
 3. **IN-buffer updates**: WRMEM only takes memory slots that no engine requests (ARCH 2.2), so engines are never delayed. It has no reply, so it never holds H_TX (the RX stream), and E_TX takes no host stream. Arm with one WRMEM from BUF to BUFKEY (KEY0 rewritten unchanged, BUFKEY last); write only while disarmed (after EV_INACK or a data event). No `RDMEM` while the bus is active.
 4. **RX FIFO drain, LINK B = 16** (48 MHz: 3 Mbaud, RP2350 hardware UART; B = 8 needs the PIO host link, later). Worst case = 8 payload bytes with no stuffing: 12 bytes + 1 event, bytes ≥ 256 clk apart, the last CRC byte, token PID and event within ~70 clk. The link sends a byte in 160 clk (an event in 320), so between bytes the FIFO drains to ≤ 1 entry and the tail burst peaks at 3 of 4 entries. Measured (ISS, B = 16 link model, host reading continuously, 4 slot phases): peak 2 entries, no overrun. The only requirement on the RP2350 is that its UART receive buffer never fills (HOSTIF §1: ≥ 4 KB ring) and the rule **no `RDMEM`/`RDREG`/`SYNC` while the bus is active** (a reply holds H_TX; HOST_INTERFACE §7). Fallback only: if an overrun notice `ESC 0x81` still arrives, the byte was dropped but **the chip already ACKed** (CRC is checked on the bus bits), so the RP2350 treats the last data packet as lost and STALLs that transfer; the host then retries the request.
 
@@ -67,4 +67,10 @@ Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispat
 |---|---|---|---|---|
 | phases 0–3 | 2.66–2.69 | 2.69–2.72 | 3.16–3.19 | 3.16–3.19 |
 
-All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound vs ISS: every guarded step of both engines over a mixed sequence (SETUP/DATA, IN/DATA/ACK, NAK, bad CRC, keep-alive, STALL, foreign IN), 4 phases: 2 128 steps (OWNCHK 1) and 2 224 (OWNCHK 0); none above its bound, none unbounded.
+All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound vs ISS: every guarded step of both engines over a mixed sequence (SETUP/DATA, IN/DATA/ACK, NAK, bad CRC, keep-alive, STALL, foreign IN), 4 phases: 2 128 steps (OWNCHK 1) and 2 224 (OWNCHK 0); none above its bound. Statically, the stuff-bit `smp` path through `ret` has no bound ("?" in the listing); its measured steps are covered by the sweep.
+
+## 11. Enumeration and review (step 5)
+- `sw/tests/test_usb_enum.py`: host model (`usb_host.py`, USB retry rules) + RP2350 stand-in over the real host link (B = 16, WRMEM only, no reply commands): bus reset, GET_DESCRIPTOR(device) at 0, SET_ADDRESS (keys switched on its EV_INACK), device / configuration / HID report descriptors, SET_CONFIGURATION, then report descriptor + SET_IDLE while the first report is being armed, 10 key reports; NAK-until-ready throughout; one corrupted SETUP DATA retried. Time scaled (reset 1 500 clk). Cocotb `test/test_usb_ls.py`: GET_DESCRIPTOR(device) in RTL/ISS lockstep (21 s).
+- Fix (0 words): the image now holds the address-0 keys (0x7C00, 0x0860) and E_RX presets LFSR_LO = 0xFFFF in `.init`; before, the first EOP after boot matched KEY0 = 0 against LFSR 0 and armed a phantom data packet.
+- RP2350 rules added: (a) attribute EV_INACK to what was armed, in stream order; (b) on any SETUP/OUT data event write BUFKEY 0 first and wait until it has landed (UART backlog + 2 bytes) before re-arming, because an arm WRMEM in flight can land after the chip's disarm; an EV_INACK inside that window belongs to the stale arm; (c) PIDCHK 0: a data event whose closing token byte is not SETUP/OUT means a corrupted token disarmed the buffer: re-arm it; (d) PIDCHK 0: a DATA PID other than C3/4B was ACKed by the chip; for SETUP, STALL the data/status stage so the host retries the request; OUT data is lost (limitation; PIDCHK 1 removes it).
+- A bus reset in the middle of a SETUP/OUT closes the pending data packet as EV_CRC (no bytes); the next SETUP works at once (tested).

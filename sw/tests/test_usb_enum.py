@@ -15,7 +15,7 @@ def enumerate_iss(own=1, full=True, corrupt_req=9, max_clk=3_000_000):
         c.step(0x08, 0x20)
         hl.sample(c)
     hl.got = []
-    rp = Rp2350(img, hl.send)
+    rp = Rp2350(img, hl.send, lambda: len(hl.q))
     host = UsbHost(corrupt_setup=lambda p: p[1] == corrupt_req, full=full)
     while not host.done and c.cycle < max_clk:
         t = c.cycle
@@ -51,5 +51,5 @@ def test_usb_enum_keyboard(own):
     c, host, rp = enumerate_iss(own)
     r = host.result
     assert r["dev0"] == DEV_DESC and r["dev"] == DEV_DESC and r["cfg9"] == CFG_DESC[:9] and r["cfg"] == CFG_DESC
-    assert r["report"] == REPORT_DESC and r["reports"] == REPORTS and rp.configured
+    assert r["report"] == REPORT_DESC and r["report2"] == REPORT_DESC and r["reports"] == REPORTS and rp.configured
     common(host, rp, 9)
