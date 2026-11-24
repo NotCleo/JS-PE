@@ -755,3 +755,141 @@ class CanNode:
             if self.ack and self.txk(t) is None:
                 self.ack_from = self.next_bit(t)
             self.st, self.idle = "idle", 0
+
+
+# ---------------- USB low speed (USB 2.0 ch. 7-8) ----------------
+# Line states (D+, D-): LS idle J = (0, 1), K = (1, 0), SE0 = (0, 0). Bits LSB first, NRZI: 0 = transition.
+USB_J, USB_K, USB_SE0 = (0, 1), (1, 0), (0, 0)
+USB_PID = {"OUT": 0xE1, "IN": 0x69, "SETUP": 0x2D, "DATA0": 0xC3, "DATA1": 0x4B,
+           "ACK": 0xD2, "NAK": 0x5A, "STALL": 0x1E}
+
+
+def usb_crc5(v11):
+    # v11 = addr | ep << 7, fed LSB first; x^5 + x^2 + 1, init 11111, complemented
+    crc = 0x1F
+    for i in range(11):
+        crc = (crc >> 1) ^ 0x14 if (crc ^ (v11 >> i)) & 1 else crc >> 1
+    return crc ^ 0x1F
+
+
+def usb_crc16_reg(data, crc=0xFFFF):
+    # reflected x^16 + x^15 + x^2 + 1 register after the bytes (no final complement)
+    for byte in data:
+        for i in range(8):
+            crc = (crc >> 1) ^ 0xA001 if (crc ^ (byte >> i)) & 1 else crc >> 1
+    return crc
+
+
+def usb_crc16(data):
+    return usb_crc16_reg(data) ^ 0xFFFF
+
+
+def usb_token(pid, addr, ep):
+    v = (addr & 0x7F) | (ep & 0xF) << 7
+    w = v | usb_crc5(v) << 11
+    return [USB_PID[pid], w & 0xFF, w >> 8]
+
+
+def usb_data(pid, payload, bad_crc=False):
+    c = usb_crc16(payload) ^ (0x0001 if bad_crc else 0)
+    return [USB_PID[pid]] + list(payload) + [c & 0xFF, c >> 8]
+
+
+def usb_key(addr, ep):
+    # the RP2350's token key: CRC-16 register after token bytes b1, b2 from 0xFFFF
+    return usb_crc16_reg(usb_token("IN", addr, ep)[1:])
+
+
+def usb_stuffed_bits(data):
+    raw = [0] * 7 + [1] + [b >> i & 1 for b in data for i in range(8)]
+    out, run = [], 0
+    for b in raw:
+        out.append(b)
+        run = run + 1 if b else 0
+        if run == 6:
+            out.append(0)
+            run = 0
+    return out
+
+
+class UsbHostLine:
+    # what the host drives: segments (t_start, t_end, state); None = not driving
+    def __init__(self, bit=32.0):
+        self.bit, self.segs, self.t = bit, [], 0.0
+        self.eop_ends = []
+
+    def _seg(self, n_bits, state):
+        t1 = self.t + n_bits * self.bit
+        self.segs.append((self.t, t1, state))
+        self.t = t1
+
+    def packet(self, data, t=None, eop=True):
+        if t is not None:
+            self.t = max(self.t, t)
+        st = USB_J
+        for b in usb_stuffed_bits(data):
+            if b == 0:
+                st = USB_K if st == USB_J else USB_J
+            self._seg(1, st)
+        if eop:
+            self.eop(drive_j=True)
+        return self.t
+
+    def eop(self, t=None, drive_j=True):
+        if t is not None:
+            self.t = max(self.t, t)
+        self._seg(2, USB_SE0)
+        self.eop_ends.append(self.t)
+        if drive_j:
+            self._seg(1, USB_J)
+        return self.t
+
+    def keepalive(self, t=None):
+        return self.eop(t)
+
+    def idle(self, n_bits):
+        self.t += n_bits * self.bit
+        return self.t
+
+    def state(self, t):
+        k = bisect.bisect_right([s[0] for s in self.segs], t) - 1
+        if k >= 0 and self.segs[k][0] <= t < self.segs[k][1]:
+            return self.segs[k][2]
+        return None
+
+
+def usb_decode(log, bit, t_from=0):
+    # log: list of (D+, D-) per clk. Packets: J->K starts SYNC; sample at mid-bit; stop at SE0.
+    # -> [(t_first_K, t_eop_end, bytes, ok)]; ok = SYNC, stuffing and whole bytes correct
+    out, t, n = [], t_from, len(log)
+    while t < n - 1:
+        if not (log[t] == USB_J and log[t + 1] == USB_K):
+            t += 1
+            continue
+        t0 = t + 1
+        prev, bits, k, ok = USB_J, [], 0, True
+        while True:
+            ts = int(t0 + (k + 0.5) * bit)
+            if ts >= n:
+                return out
+            s = log[ts]
+            if s == USB_SE0:
+                break
+            bits.append(1 if s == prev else 0)
+            prev, k = s, k + 1
+        te = ts
+        while te < n and log[te] == USB_SE0:
+            te += 1
+        data, run = [], 0
+        for b in bits:
+            if run == 6:
+                ok &= b == 0
+                run = 0
+                continue
+            data.append(b)
+            run = run + 1 if b else 0
+        ok &= data[:8] == [0] * 7 + [1] and (len(data) - 8) % 8 == 0
+        by = [sum(data[8 + 8 * j + i] << i for i in range(8)) for j in range((len(data) - 8) // 8)]
+        out.append((t0, te, by, ok))
+        t = te
+    return out

@@ -216,5 +216,5 @@ indat:  li    R2, #2
 
 ; ---------------- RP2350-written memory ----------------
 .org BUF
-        .space 7                        ; IN buffer
-        .word 0, 0, 0                   ; KEY0, BUFKEY, KEY1 (written before RUN)
+inbuf:  .space 7                        ; IN buffer
+keys:   .word 0, 0, 0                   ; KEY0, BUFKEY, KEY1 (written before RUN)
