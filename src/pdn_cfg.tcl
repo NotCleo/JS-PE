@@ -1,5 +1,5 @@
-# LibreLane 3.1.0.dev4 scripts/openroad/common/pdn_cfg.tcl (Apache-2.0) with Cleo's SRAM macro grid (D058, D060, D128):
-# the default macro grid is replaced by one grid per hard macro with a Metal4 strap on every supply column.
+# LibreLane 3.1.0.dev4 scripts/openroad/common/pdn_cfg.tcl (Apache-2.0) with Cleo's SRAM supply straps (D058, D060, D128, D129):
+# no default macro grid; Metal4 straps over every macro supply column are added after pdngen.
 # Copyright 2025 LibreLane Contributors
 #
 # Adapted from OpenLane
@@ -253,28 +253,62 @@ if { $::env(PDN_CORE_RING) == 1 } {
     }
 }
 
-# D128: one grid per hard macro, a strap on every supply column, extended to macro + halo where the straps above start.
-foreach jspe_inst $jspe_macros {
-    set jspe_grid "jspe_macro_[regsub -all {[^A-Za-z0-9_]} [$jspe_inst getName] _]"
-    define_pdn_grid \
-        -macro \
-        -instances [$jspe_inst getName] \
-        -name $jspe_grid \
-        -starts_with POWER \
-        -halo "$::env(PDN_HORIZONTAL_HALO) $::env(PDN_VERTICAL_HALO)" \
-        -grid_over_boundary
-    set jspe_ref [expr {[[$jspe_inst getBBox] xMin] / double($jspe_dbu)}]
-    foreach jspe_col [jspe_macro_columns $jspe_inst] {
-        lassign $jspe_col jspe_net jspe_x
-        puts "\[INFO\] Cleo: $jspe_net strap over [$jspe_inst getName] column at x = $jspe_x"
-        add_pdn_stripe \
-            -grid $jspe_grid \
-            -layer $::env(PDN_VERTICAL_LAYER) \
-            -width $jspe_w \
-            -pitch 2000 \
-            -offset [expr {$jspe_x - $jspe_ref}] \
-            -number_of_straps 1 \
-            -nets $jspe_net \
-            -extend_to_boundary
+# D128: pdngen keeps core straps clear of a macro's own supply pins, so it cannot join Metal4 straps to Metal4 macro pins.
+# After pdngen, one Metal4 special wire per supply column runs from the macro edge into the core strap that ends at the halo.
+proc jspe_macro_straps {} {
+    set block [ord::get_db_block]
+    set dbu [$block getDbUnitsPerMicron]
+    set layer [[ord::get_db_tech] findLayer $::env(PDN_VERTICAL_LAYER)]
+    set hw [expr {round($::env(PDN_VWIDTH) * $dbu / 2.0)}]
+    set ovl [expr {round(1.0 * $dbu)}]
+    set reach [expr {round(4.0 * $dbu)}]
+    foreach inst [$block getInsts] {
+        if { [[$inst getMaster] getType] != "BLOCK" } { continue }
+        set bb [$inst getBBox]
+        foreach col [jspe_macro_columns $inst] {
+            lassign $col net_name x_um
+            set net [$block findNet $net_name]
+            set x [expr {round($x_um * $dbu)}]
+            set x1 [expr {$x - $hw}]
+            set x2 [expr {$x + $hw}]
+            set y1 [$bb yMin]
+            set y2 [$bb yMax]
+            set joined 0
+            foreach sw [$net getSWires] {
+                foreach sb [$sw getWires] {
+                    if { [$sb isVia] || [$sb getTechLayer] != $layer } { continue }
+                    if { [$sb xMin] > $x || [$sb xMax] < $x } { continue }
+                    set hit 0
+                    if { [$sb yMin] >= [$bb yMax] && [$sb yMin] <= [$bb yMax] + $reach } {
+                        set y2 [expr {max($y2, [$sb yMin] + $ovl)}]
+                        set hit 1
+                    }
+                    if { [$sb yMax] <= [$bb yMin] && [$sb yMax] >= [$bb yMin] - $reach } {
+                        set y1 [expr {min($y1, [$sb yMax] - $ovl)}]
+                        set hit 1
+                    }
+                    if { $hit } {
+                        # continue the core strap at its own x (base-pitch stripes sit off the column centre)
+                        set x1 [$sb xMin]
+                        set x2 [$sb xMax]
+                        incr joined
+                    }
+                }
+            }
+            if { !$joined } {
+                puts "\[WARNING\] Cleo: no core strap meets [$inst getName] column x = $x_um ($net_name)"
+            }
+            set swire [odb::dbSWire_create $net "ROUTED"]
+            odb::dbSBox_create $swire $layer $x1 $y1 $x2 $y2 "STRIPE"
+            puts "\[INFO\] Cleo: $net_name strap over [$inst getName] column x = $x_um, y [expr {$y1 / double($dbu)}]-[expr {$y2 / double($dbu)}], joins $joined"
+        }
+    }
+}
+
+if { [info commands jspe_pdngen_stock] == "" } {
+    rename pdngen jspe_pdngen_stock
+    proc pdngen {args} {
+        jspe_pdngen_stock {*}$args
+        jspe_macro_straps
     }
 }
