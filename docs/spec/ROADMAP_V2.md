@@ -43,7 +43,11 @@ Timing rule for A–F: keep each local and registered (timer events → S → pi
 
 **Full 10BASE-T needs 1 + A + B + C**, and a clock of exactly 40 or 60 MHz for an even half-bit grid (50 MHz puts the mid-bit edge 10 ns off; 55 MHz adds jitter).
 
-## 4. Decisions for the author
+## 4. Decisions (decided 2026-11-25, D124–D127)
+
+**Decided:** (1) rtl-freeze-v1 stays for step 1; SRAM retry as a flow/config change on `JSPE_MEM_SRAM` only, ≤ 2 GDS attempts by 2026-12-10, else flops; RTL v2 (A+B, optional C) not approved, go/no-go 2026-12-10 only if SRAM is green and step 1 is done, last src/ change 2026-12-20 (D124). (2) Scope (b): USB LS program, 10BASE-T link pulses, PIO host link, SRAM retry; full 10BASE-T out of scope, the write-up documents the §2 gap (D125). (3) Sign-off 50 MHz; USB LS demo 48 MHz (32 clk/bit); all demos assemble with `-D CLK_HZ` (D126). (4) Any src/ change runs the full chain below before it counts (D127).
+
+Original questions:
 
 1. Lift the area freeze / rtl-freeze-v1 for a v2 RTL batch (new tag), or stay program-only?
 2. Scope: (a) USB LS + 10BASE-T link pulses only (no RTL); (b) + SRAM retry; (c) + accelerators A/B/C (+ D/E); (d) full 10BASE-T.
@@ -55,3 +59,14 @@ Timing rule for A–F: keep each local and registered (timer events → S → pi
 1. No RTL: usb_ls.s (design note first, per CLAUDE.md small steps), PIO host link, 10BASE-T link-pulse program, write-up section stating the measured 10BASE-T gap.
 2. SRAM macro retry (time-boxed, fallback to flops).
 3. If approved: A + B → C → rerun Manchester at 10 Mbit/s and 10BASE-T end to end → D/E if area allows. F is future work.
+
+## 6. Schedule
+
+| Date | Milestone |
+|---|---|
+| 2026-12-08 | USB LS program, 10BASE-T link pulses, PIO host link |
+| 2026-12-10 | SRAM retry done (≤ 2 GDS attempts) or flops kept; RTL v2 go/no-go |
+| 2026-12-20 | last src/ change |
+| 2027-01-05 | final GDS + GLS green |
+| 2027-01-10 | docs |
+| 2027-01-15 | submit |
