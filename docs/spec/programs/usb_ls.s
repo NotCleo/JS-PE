@@ -130,6 +130,8 @@ tidle:  li    S, #0x80                  ; SYNC
         li    R0, #0
         wcfg  POLY_HI, R0
         wcfg  LFSR_HI, R0
+        li    R0, #0xFFFF
+        wcfg  LFSR_LO, R0               ; never a key: an EOP before the first packet matches nothing
         li    R0, #1
         wcfg  LFCFG, R0                 ; right form
         li    R2, #0                    ; R2: 0, token PID (expect DATA) or 2 (expect ACK)
@@ -217,4 +219,4 @@ indat:  li    R2, #2
 ; ---------------- RP2350-written memory ----------------
 .org BUF
 inbuf:  .space 7                        ; IN buffer
-keys:   .word 0, 0, 0                   ; KEY0, BUFKEY, KEY1 (written before RUN)
+keys:   .word 0x7C00, 0, 0x0860         ; KEY0, BUFKEY, KEY1 of address 0 (bus-reset state)
