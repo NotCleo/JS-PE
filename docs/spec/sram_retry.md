@@ -8,12 +8,12 @@ Flow/config only on `JSPE_MEM_SRAM`; base = 6896dd8 merged into today's src/conf
 - JSON crash: unescaped `"\VDD!"` in netgen's `badnets`, mismatch only.
 
 ## Fix
-- `src/pdn_cfg.tcl`: a macro grid per hard macro (`define_pdn_grid -macro`, halo = placement halo) holding straps on all 40 supply columns, extended to the grid boundary to abut the stdcell straps. Same layer: no via; non-empty grid: no PDN-0233.
+- `src/pdn_cfg.tcl` (D129): after the stock `pdngen`, one Metal4 strap per supply column (all 40) from the macro's bottom into the core strap that ends at the halo. A pdngen macro grid can't do it: straps confined to the macro, trimmed (no vias), core straps cut short of the pins.
 - No equate, no renamed views: Netgen.LVS never reads the macro CDL (MACROS `spice` unused, `-blackbox`), and renamed LEF pins would diverge from the GDS labels. Fallback if a pin mismatch remains: `"NETGEN_SETUP": "dir::netgen_setup.tcl"` (sources the PDK file, adds `equate pins`); TT passes src/config.json keys through to config_merged.json.
-- Local check before attempt 1: pdngen (OpenLane container, older OpenROAD) on run 3's pre-PDN DEF, then Magic extraction must merge all three supply ports.
+- Local check before attempt 1: full TT harden in the LibreLane 3.1.0.dev4 container (same PDK), PSM grid check and LVS.
 
 ## From 6896dd8
-MACROS (pdk_dir:: views, (3.36, 3.78) FS), halos, PDN_MACRO_CONNECTIONS, PDN_CFG, Metal4 pitch/offset/spacing 67.66/17.39/3.52, Magic DRC off + overlaps waived + KLayout DRC on. Keep D082 repair settings; add `"VERILOG_DEFINES": ["JSPE_MEM_SRAM"]`. PSM/IR: attempt 1 keeps ERROR_ON_PDN_VIOLATIONS and RUN_IRDROP_REPORT off but reads the PDN grid check; if clean, attempt 2 re-enables both.
+MACROS (pdk_dir:: views, (3.36, 3.78) FS), halos, PDN_MACRO_CONNECTIONS, PDN_CFG, Metal4 pitch/offset/spacing 67.66/17.39/3.52, Magic DRC off + overlaps waived + KLayout DRC on. Keep D082 repair settings; add `"VERILOG_DEFINES": ["JSPE_MEM_SRAM"]`. PSM/IR: back on (grid check passes locally).
 
 ## GLS model
 Vendored IHP behavioural model, test/ihp_sram (Apache-2.0, `-DSIM -DFUNCTIONAL`), already in RTL and GL builds; run with `JSPE_MEM_WORDS=512` (CI gl_test too). Check the GL netlist's macro instance has no supply pins.
