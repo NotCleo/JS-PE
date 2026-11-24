@@ -2,6 +2,8 @@
 
 The decisions that shaped the chip, what I rejected, and why. Every decision has a line in [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md) (format: decision | alternatives rejected | why | cost | protocols); the D-numbers below point there. The candidate architectures and their scoring are in [docs/history/ARCH_CANDIDATES.md](https://github.com/NotCleo/JS-PE/blob/main/docs/history/ARCH_CANDIDATES.md).
 
+Before writing the spec I reviewed existing programmable-I/O approaches (RP2040 PIO, TI PRU) and an earlier public entry in this competition. The architecture candidates were drafted first, without that review, and compared against it afterwards. Cleo differs deliberately: `guard : operation` instructions, latched events, time-division fetch with proven latency bounds, four engines sharing one program memory, and formal sign-off.
+
 ## 1. Summary
 
 | # | Decision | Rejected | D-IDs |

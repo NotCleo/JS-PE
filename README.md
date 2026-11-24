@@ -199,6 +199,8 @@ Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICA
 
 I built Cleo with Claude Code in seven days (2026-11-14 to 2026-11-20). The working rules, the phase commands and the plan were drafted with Claude in a chat before the repo existed. The spec came before the code; when something was unclear, Claude stopped and asked, and every decision went into [docs/DECISIONS.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DECISIONS.md). Sessions were short, so all state lived in files and commits.
 
+Before writing the spec I reviewed existing programmable-I/O approaches (RP2040 PIO, TI PRU) and an earlier public entry in this competition. The architecture candidates were drafted first, without that review, and compared against it afterwards. Cleo differs deliberately: `guard : operation` instructions, latched events, time-division fetch with proven latency bounds, four engines sharing one program memory, and formal sign-off.
+
 | Stage | Model | Mode | Output tokens | Result |
 |---|---|---|---|---|
 | 0 plan | Claude (chat) | — | not recorded | rules, phase commands, plan |

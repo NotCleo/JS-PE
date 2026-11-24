@@ -1,6 +1,6 @@
 # ARCH_CANDIDATES — Phase 2a (2026-11-14)
 
-Three candidate architectures.
+Three candidate architectures, drafted before reviewing prior art; §9 holds the adjustments after comparing against it.
 None is modelled on RP2040 PIO or TI PRU. All numbers are pre-synthesis estimates (cells ±30 %) unless marked *measured*.
 Two figures in §§0–8 are superseded by §9: the flop fallback is ≈ 7.7K cells (not 4.8K) and the host link is capped at 1.0K cells (not 0.6K).
 **Approved 2026-11-15: Candidate B (Cleo) with the changes in §10** (time-division fetch with prefetch, latched events). §2, §5, §7 and §8 were edited to match; where an older section and §10 differ, §10 wins.
@@ -319,11 +319,11 @@ Deliberately left out of v1: parallel 2/4-bit shift (Dual/Quad SPI), 10 Mbit Man
 
 ---
 
-## 9. Adjustments before approval (2026-11-14; they describe B before the changes of §10)
+## 9. Adjustments before approval (2026-11-14, compared against prior art; they describe B before the changes of §10)
 
 The choice stands: **Candidate B (Cleo)**. Adjustments:
 
-1. Fallback memory cost 4.8K → 7.7K cells (≈ 3.7 mapped cells/bit, not 2.3). Totals with fallback: A 17.5K, B 19.1K, C 14.4K. Logic cap for B tightens to ≤ 14K placed cells.
+1. Fallback memory cost 4.8K → 7.7K cells (the 2.3 cells/bit hand estimate was too low). Totals with fallback: A 17.5K, B 19.1K, C 14.4K. Logic cap for B tightens to ≤ 14K placed cells.
 2. Host link budget 0.6K → 1.0K hard cap: load, read-back, stream mux, halt/run/step, register read. Anything more needs a DECISIONS line. B becomes 9.1K synth ≈ 11.4K placed.
 3. The 8-bit data-path option gains weight (60 MHz stretch, smaller engine). Still a 2b decision after the paper programs.
 4. Area by µm² is not tight (≈ 25 % of the die), so a 2 KB macro or the dual-port 512x16 remains affordable if 2b shows memory or fetch contention is the limit. Not adopted now.
