@@ -126,3 +126,30 @@ Minimal versions written only to synthesize: `make area` (yosys, sg13g2 typ lib)
 - Area no longer constrains any of them (ROADMAP_V2's 27k/11k/10k placed were per-cell guesses; the minimal versions are smaller, the second LFSR is close).
 - The real costs: D124 freeze, the D127 chain (isa.yaml → gen_isa → ISS → RTL → formal → lockstep → bound sweep → GDS → GLS) and timing: tick/tock would become shift enables feeding S, the FIFO strobes and the shared LFSR step (a cross-engine path), next to the fire path D081 cut.
 - Minimal A + B does not make 10BASE-T possible: RX still needs memory transfer at line rate and a 40/60 MHz clock (ROADMAP_V2 §3; out of scope, D125).
+
+## 4. Ranked list (program/host items merged with the open ROADMAP_V2 items)
+
+Scores 1–3: **R** = reprogrammability (a protocol or use not designed in, run on the frozen RTL), **U** = unique capability of an emulator (concurrency, monitor, fault injection, cycle-exact timing), **V** = verification or bring-up evidence. Rank by score per day, ties to the item with a named test. Days = one person, incl. tests at I (and R where the item has an RTL lockstep test).
+
+| Rank | Item | R | U | V | Days | RTL | Basis |
+|---|---|---|---|---|---|---|---|
+| 1 | On-chip bridges UART → SPI and I2C → UART as programs + tests (ring buffer or overrun event on the UART side) | 3 | 3 | 2 | 1.5 | no | 3.4: both prototypes run; host out of the data path; I2C back-pressure on chip |
+| 2 | Fault-injection variants + one fault control word; EI1 at I and R | 2 | 3 | 3 | 2.5 | no | §1 row 13; REQUIREMENTS §5 SHOULD |
+| 3 | Monitor programs (I2C no-drive target with START/STOP/ACK events, SPI on two engines; UART = `uart_rx` as is); MON1 at I and R | 2 | 3 | 3 | 2 | no | §1 rows 10, 14; PINS 3.8; no-drive proven |
+| 4 | Measurement program: width, period, duty, IR NEC/RC5 decode, autobaud on `uart_rx` | 3 | 2 | 1 | 1 | no | 3.3: ±1 clk today |
+| 5 | Scenario runner (PASS/FAIL) + cold-start sequence with a per-demo RP2350 GPIO plan | 1 | 2 | 3 | 2 | no | §1 rows 1, 16; needed for board bring-up anyway |
+| 6 | 10BASE-T link pulses (ROADMAP_V2, due 2026-12-08) | 3 | 1 | 1 | 1 | no | ROADMAP_V2 §2; tiny program + Pmod; "link up" on a PC |
+| 7 | PIO host link at B = 8/4 (ROADMAP_V2 item 0, due 2026-12-08) | 1 | 1 | 2 | 2 | no | chip side exists (HOSTIF 1); needs the board to verify; unlocks 32-bit I2S, larger RDMEM chunks (D088), faster capture streaming |
+| 8 | Resident set / hot swap / pad move as SDK calls + conflict check (pads, engines, words, LFSR) | 3 | 2 | 1 | 1.5 | no | §1 row 6; all ten programs = 429 words |
+| 9 | Device personalities: I2C EEPROM (host-backed), sensor register map with live values, multi-address target | 2 | 2 | 1 | 2.5 | no | §1 rows 11, 12 |
+| 10 | Image manifest + parameter table for numeric options | 2 | 1 | 1 | 2 | no | §1 row 5 |
+| 11 | LIN (break variant) / Modbus RTU host layers | 2 | 1 | 1 | 1 | no | §1 row 18 |
+| 12 | I2S TX on one engine (paper-feasible) | 2 | 1 | 1 | 1.5 | no | §1 row 18 |
+| 13 | Small SPI-flash personality (`spi_tgt` variant, 0x9F/0x05/0x03 + 24-bit address) | 2 | 1 | 1 | 1.5 | no | §1 row 11 |
+| 14 | CAPABILITY "candidates" table + write-up corrections of §2 | 1 | 1 | 2 | 0.5 | no | §1 row 4, §2 |
+| 15 | Second LFSR | 2 | 1 | 1 | 4–6 | **yes** | 3.5: 13.1k placed; lifts can.s's 625 kbit/s CRC-window limit (D105), allows CAN + USB or two CAN nodes at once |
+| 16 | Oversampling capture register | 1 | 1 | 1 | 4–6 | **yes** | 3.5: 8.3k placed; only raw capture and glitch statistics gain |
+| 17 | Minimal timer-clocked shift + Manchester/biphase TX | 1 | 1 | 1 | 6–8 | **yes** | 3.5: ≤ 3.4k placed; no shipped row needs it; 10BASE-T still out (D125) |
+| — | Dropped: fused decrement-and-branch (3.2), hardware DMA (3.1), multi-lane shift, SCK-domain CDC, SJW resync, hardware CDR | | | | | | §1 rows 2, 3, 7, 9; 3.2 |
+
+Ranks 1–8 add up to 13.5 days, ranks 1–14 to 24 days.
