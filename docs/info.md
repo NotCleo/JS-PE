@@ -1,10 +1,10 @@
 ## How it works
 
-Cleo is a reprogrammable protocol emulator. Four identical engines (E0–E3) run 16-bit `guard : operation` instructions from one shared 128x16 program memory. An engine holds its armed instruction until the guard's event (pin edge, timer, shifter, FIFO state) occurs and acts in that same clock, so a pad edge becomes a pad change in 3–4 clk + pad with no fetch in between. Each engine has a timer, a shifter with taps, an ALU and four logical pins bound to any input; shared blocks are a CRC/LFSR unit, eight signal flags, per-engine RX/TX byte FIFOs and a host link. Output pads are owned by one (engine, pin) each and only the host can enable them.
+Cleo is a reprogrammable protocol emulator. Four identical engines (E0–E3) run 16-bit `guard : operation` instructions from one shared 512x16 program memory (an IHP SRAM macro). An engine holds its armed instruction until the guard's event (pin edge, timer, shifter, FIFO state) occurs and acts in that same clock, so a pad edge becomes a pad change in 3–4 clk + pad with no fetch in between. Each engine has a timer, a shifter with taps, an ALU and four logical pins bound to any input; shared blocks are a CRC/LFSR unit, eight signal flags, per-engine RX/TX byte FIFOs and a host link. Output pads are owned by one (engine, pin) each and only the host can enable them.
 
 The host (the RP2350 on the demo board) loads programs and streams data over a 3-pin UART-style link: H_RX `ui[3]`, H_TX `uo[4]`, H_RDY `uo[5]` (0 = ready), 8N1 at 16 clk/bit after reset (8 or 4 selectable). Programs are written in assembly and assembled on a PC (`sw/jspe_asm.py`), which also checks each program's timing claims. Shipped programs: UART TX/RX, SPI controller/target, I2C controller/target, and ones not designed in: WS2812, Manchester, CAN 2.0A. The chip loses its program when deselected; reload it from the host.
 
-Sign-off (GDS run 44625407065): 57.3 % of the core placed, setup slack 1.183 ns at 50 MHz in the slow corner, DRC/LVS/antenna/precheck pass, 45/45 system tests at gate level. All protocol rates so far are from simulation. Full documentation: the repository README.
+Sign-off (GDS run 45553919240): 37.9 % of the core placed including the SRAM macro, setup slack 2.68 ns at 50 MHz in the slow corner, DRC/LVS/antenna/precheck pass, 45/45 system tests at gate level. All protocol rates so far are from simulation. Full documentation: the repository README.
 
 ## How to test
 

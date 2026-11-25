@@ -10,7 +10,7 @@ Conventions
 
 ## 1. Overview
 
-Four identical engines E0–E3 execute 16-bit `guard : operation` instructions from one shared 128x16 memory (flop build, D062/D063; the 512x16 SRAM macro is a deferred retry). An engine holds its armed instruction until the guard's event happens and then acts in that clock, so the reaction to a pin edge is 3–4 clk + pad (D081) with no fetch in between. Everything protocol-specific is program; hardware provides events (pin edges, timer tick/tock, host FIFO levels, condition cells), a shifter with stream taps, a timer, an ALU, and pin actions.
+Four identical engines E0–E3 execute 16-bit `guard : operation` instructions from one shared 512x16 memory (IHP SRAM macro, D131; 128x16 flop fallback with `-DJSPE_MEM_FLOP`, D062/D063). An engine holds its armed instruction until the guard's event happens and then acts in that clock, so the reaction to a pin edge is 3–4 clk + pad (D081) with no fetch in between. Everything protocol-specific is program; hardware provides events (pin edges, timer tick/tock, host FIFO levels, condition cells), a shifter with stream taps, a timer, an ALU, and pin actions.
 
 ```
  ui_in[7:0] ──┐  jspe_pins                                  ┌── uo_out[7:0]
@@ -31,7 +31,7 @@ Four identical engines E0–E3 execute 16-bit `guard : operation` instructions f
    │ jspe_arb: slot counter, slot map, address mux   │◄─────────┤ jspe_link │  H_TX  = uo_out[4]
    └────────────────────┬────────────────────────────┘ host req └───────────┘  H_RDY = uo_out[5]
                    ┌────▼─────┐
-                   │ jspe_mem │  128x16 flops (built), or 1P 512x16 SRAM macro (-DJSPE_MEM_SRAM, retry)
+                   │ jspe_mem │  1P 512x16 SRAM macro (shipped, D131), or 128x16 flops (-DJSPE_MEM_FLOP)
                    └──────────┘
 ```
 Top module `tt_um_notcleo_jspe`: synchronizes `rst_n` (2 FF) into the internal synchronous active-low reset, instantiates the blocks, ties `ena` and unused inputs into `_unused`.
@@ -79,7 +79,7 @@ All ports are synchronous to `clk`. Widths in bits. "pulse" = high for one clock
 | `en`, `we`, `addr`, `wdata` | in | 1, 1, 9, 16 | sampled at the clock edge |
 | `rdata` | out | 16 | word addressed in the previous clock, valid in the clock after `en & ~we` |
 
-- Built (default, D062/D063): 128x16 flops with registered read address; `addr[8:7]` ignored, so addresses alias modulo 128. Option `-DJSPE_MEM_SRAM` (deferred retry, failed LVS in run 3): IHP `RM_IHPSG13_1P_512x16_c2_bm_bist` behind this interface (BIST pins tied off, bit mask all ones).
+- Built (default, D131): IHP `RM_IHPSG13_1P_512x16_c2_bm_bist` behind this interface (BIST pins tied off, bit mask all ones), with a macro power grid on its 40 supply columns (D128–D130). Fallback `-DJSPE_MEM_FLOP` (D062/D063): 128x16 flops with registered read address; `addr[8:7]` ignored, so addresses alias modulo 128.
 - Contents are undefined after reset and after deselect. No engine may run before the host has loaded it.
 
 ### 2.4 jspe_fifo — stream FIFO, depth 4 (x8)
@@ -333,7 +333,7 @@ The design keeps no state across deselect or reset. Reload is always the full se
 
 | Space | Size | Contents |
 |---|---|---|
-| Program/table memory | 128 x 16 (flop build, aliased modulo 128; 512 x 16 with the SRAM retry) | instructions, `.word` tables and buffers of all engines, no fixed regions and no protection. Any engine can `ld`/`st` any word. Addresses 9 bit, wrap modulo 128 (512 with the SRAM). |
+| Program/table memory | 512 x 16 (SRAM build, D131; 128 x 16 aliased modulo 128 on the flop fallback) | instructions, `.word` tables and buffers of all engines, no fixed regions and no protection. Any engine can `ld`/`st` any word. Addresses 9 bit, wrap modulo 512 (128 on the flop fallback). |
 | Engine registers | 8 per engine | R0, R1, R2, S, P, C, T, L (ISA.md 3) |
 | Engine configuration | index 0–8 | SHCFG, TAPCFG, TCFG, BIND01, BIND23, CC0, CC1, WV0, WV1 (`wcfg`) |
 | Shared configuration | index 16–21 | LFSR_LO, LFSR_HI, POLY_LO, POLY_HI, LFCFG (`wcfg`/`rcfg`), SIG (`rcfg` only) |
@@ -345,7 +345,7 @@ Initialisation code does not occupy memory: the assembler emits it as injected i
 
 Limit: placed standard-cell area (+ SRAM macro with its halo, SRAM build only) ≤ 60 % of the core area. Core area as reported by the GDS flow (`design__core__area`, run 43845628155): 1 208 173 µm² (die 1724.16 x 710.64 µm, core 2.88…1721.28 x 3.78…706.86), so the limit is ≈ 724.9k µm² (D063; 60 % is also the template's `PL_TARGET_DENSITY_PCT`). Cell area = what `make area LIB=<sg13g2 liberty>` reports for the synthesized netlist; placed = synthesized x 1.56, measured on the full top (run 44246474825: 445.5k µm² synthesized → 697.1k final std-cell area = 57.7 %, incl. 6 627 timing-repair, 4 242 hold and 445 clock buffers; D083); the placed rows below use x 1.56. It replaces x 1.42 from the Phase 5 build (D064), which had far fewer long nets and hold buffers. Every row is measured since the full-top integration (2026-11-18). Cell counts go into the ledger but are not a criterion.
 
-The flop build is the current build (D062): the SRAM macro failed LVS in the stock TT flow. The SRAM figures are kept for a later retry.
+The SRAM build is the shipped build (D131): run 45553919240 placed 457.9k µm² including the macro = 37.9 %. The estimates below predate it; the flop build (D062, run 44625407065, 57.3 %) is the fallback.
 
 | Block | Cells | Cell area µm² | Cap µm² | Source |
 |---|---|---|---|---|
@@ -368,7 +368,7 @@ The flop build is the current build (D062): the SRAM macro failed LVS in the sto
 | SRAM macro 45.3k µm² + 35 % halo | 0 | 61.2k | 61.2k | D010 |
 | **Total, SRAM build** | | **503.3k (41.7 %)** | **530.8k (43.9 %) ≤ 725k** | |
 | Fallback memory instead of the macro (synth 162.1k), placed | 5 003 | 252.9k | 252.9k | measured |
-| **Total, flop build (current, D062)** | 23.7K (synth 445.5k) | **695.0k (57.5 %)** | **722.5k (59.8 %) ≤ 725k** | `make area` full top; flow final 697.1k (57.7 %, run 44246474825) |
+| **Total, flop build (fallback, D062)** | 23.7K (synth 445.5k) | **695.0k (57.5 %)** | **722.5k (59.8 %) ≤ 725k** | `make area` full top; flow final 697.1k (57.7 %, run 44246474825) |
 
 - Proxy = scratch RTL written in Phase 3 from sections 7–8 and ISA.md 7–8, mapped with the `make area` flow (yosys `synth`, `abc`, typical liberty, default script). Real RTL is expected at or below it. Scaled = the 2b estimate times the ratio measured on the four engine proxies (2.09); it is replaced by the first measurement of the real block. All figures are ±25 % until then.
 - Flops per engine: 378 measured (sequencer 160, timer 82, shifter 46, R0–R2 48, pins 42).

@@ -17,10 +17,10 @@ Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https:/
 | Item | Value |
 |---|---|
 | Process | IHP SG13 130 nm through the Tiny Tapeout IHP template, 8x4 tiles |
-| Architecture | 4 engines, 128 x 16 shared program memory, 67 instructions, 3-pin host link |
+| Architecture | 4 engines, 512 x 16 shared program memory (SRAM macro), 67 instructions, 3-pin host link |
 | Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A |
-| Clock | 50 MHz (about 53 MHz possible, estimate) |
-| Area | 57.3 % of the core (my limit: 60 %) |
+| Clock | 50 MHz (about 57 MHz possible, estimate) |
+| Area | 37.9 % of the core including the SRAM macro (my limit: 60 %) |
 | Sign-off | Tiny Tapeout precheck, DRC, LVS and antenna pass; setup and hold met in all corners |
 | Tests | 45/45 system tests at RTL and at gate level; 149 formal properties proven |
 | Hardware | not tested on a board or silicon yet |
@@ -46,7 +46,7 @@ I optimised for one thing: running protocols that were not designed in.
 | Part | What it does |
 |---|---|
 | Engines (4) | each waits on one instruction and acts in the clock its event (timer, pin edge, host FIFO) arrives; each has a 16-bit timer, a shifter with taps for parity and CRC, three registers, an ALU and four logical pins that can be bound to any input |
-| Program memory | 128 x 16 words shared by time slots: each engine owns a fixed slot, so fetch time never depends on the other engines and timing can be checked before the program runs |
+| Program memory | 512 x 16 words (one IHP SRAM macro) shared by time slots: each engine owns a fixed slot, so fetch time never depends on the other engines and timing can be checked before the program runs |
 | Pads | every output pad has exactly one owner and only the host can enable it, so engines cannot fight over a pin |
 | Host link | 3 pins to the RP2350: loads programs, starts and stops engines, and streams bytes and events both ways |
 | Toolchain | assembler with a static timing check, cycle-accurate simulator, MicroPython host library; one ISA file generates the tables for all of them and for the RTL |
@@ -83,11 +83,11 @@ make formal B=arb
 Assemble a program:
 
 ```sh
-python sw/jspe_asm.py --mem 128 -D CLK_HZ=48000000 \
+python sw/jspe_asm.py -D CLK_HZ=48000000 \
     docs/spec/programs/uart_tx.s docs/spec/programs/uart_rx.s -o uart
 ```
 
-Other targets: `make unit B=<module>` (block tests), `make area` (synthesis area), `make mutate B=<block>`, `make gl-all` (gate-level tests).
+Other targets: `make unit B=<module>` (block tests), `make area` (synthesis area), `make mutate B=<block>`, `make gl-all` (gate-level tests). `MEM=flop` on `make lint`, `make test` or `make area` builds the 128 x 16 flip-flop fallback instead of the SRAM macro (assemble with `--mem 128`).
 
 ----
 
@@ -173,7 +173,21 @@ The simulator was written from the spec before the RTL. Every program was proven
 | Formal proofs (SymbiYosys, 11 blocks) | 149 properties proven |
 | Mutation testing of the proofs | 211 of 213 mutants caught, 2 equivalent |
 
-Sign-off from the [final GDS run](https://github.com/NotCleo/JS-PE/actions/runs/44625407065): precheck, DRC, LVS and antenna pass; worst setup slack 1.18 ns at 50 MHz in the slow corner; hold met in all corners; 57.3 % placed area; 19.5 mW typical; IR drop estimated by hand at 2.7 % worst per net.
+Sign-off of the shipped SRAM build ([GDS run 45553919240](https://github.com/NotCleo/JS-PE/actions/runs/45553919240)):
+
+| Check | Result |
+|---|---|
+| Tiny Tapeout precheck | pass |
+| DRC (KLayout, route), LVS, antenna | clean |
+| Setup slack at 50 MHz, slow / typ / fast | 2.68 / 9.08 / 12.66 ns |
+| Hold slack, slow / typ / fast | 0.602 / 0.284 / 0.105 ns |
+| Max slew / max cap | 0 / 1 (SRAM output pin, see limits) |
+| Placed area | 37.9 % of the core, macro included |
+| Power (typ) | 10.0 mW |
+| IR drop | PSM 0.31 mV; hand estimate 1.9 % worst per net ([IR_DROP](https://github.com/NotCleo/JS-PE/blob/main/docs/IR_DROP.md)) |
+| Gate-level tests | 45/45 on this run's netlist |
+
+The 128 x 16 flip-flop fallback (`-DJSPE_MEM_FLOP`) was signed off before on [run 44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065): 57.3 % placed, setup slack 1.18 ns slow, GL 45/45.
 
 Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md), [formal results](https://github.com/NotCleo/JS-PE/blob/main/formal/RESULTS.md).
 
@@ -182,8 +196,8 @@ Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICA
 ## 9. Limits
 
 - No hardware results: every rate is from simulation, and the host code has never run on an RP2350.
-- 128-word program memory: the SRAM macro failed LVS, so programs share 128 words of flip-flops. CAN fills all of it and runs alone.
-- Two max-slew violations remain in the slow corner (precheck still passes).
+- 512-word program memory shared by all four engines: CAN (128 words) fits next to UART TX + RX, but every image still has to fit in 512 words.
+- Known issue: one max-capacitance violation on the SRAM output pin `A_DOUT[13]` (0.081 pF against the macro's 0.064 pF limit, all corners; precheck and timing still pass). Its net runs about 400 µm to a buffer, and the router's estimate before detailed routing is half the final value, so post-route repair misses it; no single flow setting fixes it (D131).
 - I2C has no multi-controller arbitration. CAN leaves fault confinement to the host and flags 29-bit frames as errors.
 - No formal proofs for the ALU and the memory, and no code coverage measured.
 - The simulator and the RTL come from the same spec, so a misreading could be shared; the independent protocol models, formal proofs and reviews are the check against that.
@@ -245,7 +259,6 @@ More: [AI usage](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md).
 
 ## 12. Future work
 
-- Retry the SRAM macro: 512 words instead of 128, and about 190k µm² back (estimate).
 - One CRC unit per engine, so two CRC protocols can run at once.
 - Deeper FIFOs, so running streams tolerate a busy host link for longer.
 - Capture and replay of pin traffic, for protocols nobody has written a program for yet.

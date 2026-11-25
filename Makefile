@@ -4,13 +4,16 @@ B ?=
 NOW := $(shell date +%s)
 OSS ?= $(HOME)/tools/oss-cad-suite/bin
 T ?=
+# MEM=flop: 128x16 flop fallback instead of the SRAM macro (D131)
+MEM ?=
+MEMDEF = $(if $(filter flop,$(MEM)),-DJSPE_MEM_FLOP)
 
 .PHONY: test unit lint area swtest swtest-all gl gl-fetch gl-local gl-all formal mutate clean
 test:
-	@$(MAKE) -s -C test > test/last.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last.log $(NOW)
+	@$(MAKE) -s -C test JSPE_MEM=$(MEM) > test/last.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last.log $(NOW)
 
 gl:
-	@$(MAKE) -s -C test GATES=yes > test/last_gl.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last_gl.log $(NOW)
+	@$(MAKE) -s -C test GATES=yes JSPE_MEM=$(MEM) > test/last_gl.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last_gl.log $(NOW)
 
 # GL sim on this machine: PDK via ciel at the flow version, netlist of a GDS run (tt_submission only).
 # OSS iverilog (>= 13): the PDK flop models clock only through $$setuphold delayed_* nets, iverilog 12 leaves them X
@@ -30,7 +33,7 @@ $(IVL)/vvp:
 	@mkdir -p $(IVL)/lib && ln -sf $(OSS_TOP)/lib/libvvp.so.1 $(IVL)/lib/ && \
 	 printf '#!/bin/sh\nexec $(OSS)/iverilog "$$@"\n' > $(IVL)/iverilog && \
 	 printf '#!/bin/sh\nLD_LIBRARY_PATH=$(IVL)/lib exec $(OSS_TOP)/libexec/vvp "$$@"\n' > $@ && chmod +x $(IVL)/iverilog $@
-GL_ARGS = GATES=yes PDK_ROOT=$(PDK_ROOT) ICARUS_BIN_DIR=$(IVL) SIM_BUILD=sim_build/gl_local FST=-none
+GL_ARGS = GATES=yes JSPE_MEM=$(MEM) PDK_ROOT=$(PDK_ROOT) ICARUS_BIN_DIR=$(IVL) SIM_BUILD=sim_build/gl_local FST=-none
 GLD = test/sim_build/gl_local
 J ?= 8
 GL_TMO ?= 3000
@@ -49,10 +52,10 @@ unit:
 	@$(MAKE) -s -C test/unit B=$(B) > test/unit/last_$(B).log 2>&1; python3 scripts/test_summary.py test/unit/results_$(B).xml test/unit/last_$(B).log $(NOW)
 
 lint:
-	@verilator --lint-only -Wall -Wno-DECLFILENAME -Isrc --top-module $(or $(B),$(TOP)) src/*.v 2>&1 | grep -E '^%(Error|Warning)' | head -20; echo "lint done"
+	@verilator --lint-only -Wall -Wno-DECLFILENAME -Isrc $(MEMDEF) --top-module $(or $(B),$(TOP)) src/*.v 2>&1 | grep -E '^%(Error|Warning)' | head -20; echo "lint done"
 
 area:
-	@python3 scripts/area.py $(or $(B),$(TOP)) $(LIB)
+	@MEMDEF=$(MEMDEF) python3 scripts/area.py $(or $(B),$(TOP)) $(LIB)
 
 formal:
 	@mkdir -p build/formal; cd formal && PATH=$(OSS):$$PATH sby -f --prefix ../build/formal/$(B) $(B).sby $(T) > ../build/formal/$(B).log 2>&1; cd .. && PATH=$(OSS):$$PATH python3 scripts/formal_summary.py $(B) $(T)

@@ -19,7 +19,7 @@ Before writing the spec I reviewed existing programmable-I/O approaches (RP2040 
 | 9 | Configuration and start go through the ISA (`wcfg`, host-injected `EXEC`); no init code in memory | a host configuration bus with read-back muxes | D030 |
 | 10 | Static arming bound in the assembler; waits credited only by a stated `.assume` | trusting simulation alone; crediting prefetch implicitly | D054, D100 |
 | 11 | 16-bit data path | 8-bit data path with a 16-bit timer | D022 |
-| 12 | Program memory in flops (128 x 16) after the SRAM macro failed LVS | further macro attempts before the deadline | D003, D010, D062, D063 |
+| 12 | Program memory in flops (128 x 16) after the SRAM macro failed LVS; later the 512 x 16 macro after a fixed power grid (shipped) | further macro attempts before the deadline (taken up in v2 step 1) | D003, D010, D062, D063, D128–D131 |
 | 13 | Pads load the engine's registered pin state (+1 clk latency) to close timing | keeping the combinational pin-value → pad path | D081 |
 
 ## 2. The decisions
@@ -70,7 +70,7 @@ An 8-bit path saves ≈ 290 synthesized cells per engine (7 % of the total) but 
 
 ### 2.12 Flop memory (D003, D010, D062, D063)
 
-The plan was one 512 x 16 IHP SRAM macro (45.3k µm²) with a 128 x 16 flop fallback. GDS run 3 with the macro was clean on DRC and timing but failed LVS on supply names inside the macro (`VDD!` vs `VDD`, D062). I had set that run as the last macro attempt, so the flop build became the product: 162k µm² synthesized, 36 % of the logic, and the reason CAN fills the whole memory. The macro is the first future-work item.
+The plan was one 512 x 16 IHP SRAM macro (45.3k µm²) with a 128 x 16 flop fallback. GDS run 3 with the macro was clean on DRC and timing but failed LVS on supply names inside the macro (`VDD!` vs `VDD`, D062). I had set that run as the last macro attempt, so the flop build became the product: 162k µm² synthesized, 36 % of the logic, and the reason CAN fills the whole memory. The cause was misread: pdngen had cut every supply strap at the macro edge, so its supply pins were never connected (D128). A macro power grid on all 40 supply columns fixed it, and the second retry run (45553919240) was green on every check; the SRAM build now ships (D131) with 512 words at 37.9 % placed, and the flop build stays as a fallback (`-DJSPE_MEM_FLOP`).
 
 ### 2.13 Registered pin state to the pads (D081)
 

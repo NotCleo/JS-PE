@@ -1,5 +1,7 @@
 # SRAM macro retry (D124)
 
+Status: adopted (D131, 2026-11-25): run 45553919240 green; the SRAM build is the default, the flop build is `-DJSPE_MEM_FLOP`.
+
 Flow/config only on `JSPE_MEM_SRAM`; base = 6896dd8 merged into today's src/config.json. Evidence: run 3 (43845628155) `GDS_logs`; LibreLane 3.1.0.dev4 source.
 
 ## Root cause: a real open

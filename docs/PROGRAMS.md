@@ -7,13 +7,13 @@ Programs live in [docs/spec/programs/](https://github.com/NotCleo/JS-PE/tree/mai
 ## 1. Building an image
 
 ```sh
-# one program, 128-word build
-python sw/jspe_asm.py --mem 128 docs/spec/programs/uart_tx.s -o uart_tx
+# one program (512 words by default; --mem 128 for the flop fallback)
+python sw/jspe_asm.py docs/spec/programs/uart_tx.s -o uart_tx
 # two programs in one image, variant selected with -D, clock recorded for the host's check
-python sw/jspe_asm.py --mem 128 -D CLK_HZ=48000000 -D BAUD=115200 \
+python sw/jspe_asm.py -D CLK_HZ=48000000 -D BAUD=115200 \
     docs/spec/programs/uart_tx.s docs/spec/programs/uart_rx.s -o uart
 # move a program to another engine / load address
-python sw/jspe_asm.py --mem 128 -D spi_tgt.s:ENG=3 -D spi_tgt.s:ORG=64 docs/spec/programs/spi_tgt.s -o spi3
+python sw/jspe_asm.py -D spi_tgt.s:ENG=3 -D spi_tgt.s:ORG=64 docs/spec/programs/spi_tgt.s -o spi3
 ```
 
 Outputs: `<name>.bin` (load image for [host/jspe.py](https://github.com/NotCleo/JS-PE/blob/main/host/jspe.py)), `<name>.hex` (simulation), `<name>.lst` (listing with the arming bound per guarded instruction). The default `ORG` of some programs (i2c_tgt 144, ws2812 176) assumes the 512-word layout; on the 128-word build give `-D ORG=…` so the image fits, or the `--mem 128` check fails.
@@ -32,7 +32,7 @@ Outputs: `<name>.bin` (load image for [host/jspe.py](https://github.com/NotCleo/
 | 8 | [manchester.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/manchester.s) | Manchester TX + RX | 2 | TX 9, RX 11–14 | 2 (E0 TX, E1 RX) | TX `uo_out[3]`, RX `ui_in[4]` | `BIT`, `CVCHK`; `inv` pad / bind invert for the other convention | TX bytes, sent MSB first without gaps | RX bytes after the SFD; event 4 = end of frame or code violation | [manchester.py](https://github.com/NotCleo/JS-PE/blob/main/host/examples/manchester.py) |
 | 9 | [can.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/can.s) ([design note](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/can_design.md)) | CAN 2.0A node | 3 | 128 | 2 (E_RX, E_TX) | bus `uio[4]` od | `BIT`, `ORG_TX`, `ORG_RX` (`-D ORG_TX=0 -D ORG_RX=62` on the flop build) | frames to send | received frames as bytes + event (1 = frame OK, others = errors; see header) | planned |
 
-Words are as stated in each header (range = options). The sum has to fit 128 words for programs that run together.
+Words are as stated in each header (range = options). The sum has to fit 512 words for programs that run together (128 on the flop fallback): e.g. CAN + UART TX + RX = 144 words on 4 engines.
 
 ## 3. Combinations that have been run together
 

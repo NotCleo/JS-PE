@@ -77,8 +77,7 @@
   "MAGIC_WRITE_LEF_PINONLY": 1,
 
   "//": "===== Cleo: 512x16 SRAM macro (D058, D128, D129). Changes above: RUN_KLAYOUT_DRC 1, FP_PDN_VPITCH; the rest is added here =====",
-  "//": "jspe_mem builds the macro instead of the 128x16 flops (D062 build switch).",
-  "VERILOG_DEFINES": ["JSPE_MEM_SRAM"],
+  "//": "jspe_mem builds the macro by default (D131); -DJSPE_MEM_FLOP selects the 128x16 flop fallback.",
 
   "//": "Program memory u_mem.u_sram, flush bottom-left, FS = signal pins (Metal2) on its top edge, facing the logic.",
   "MACROS": {

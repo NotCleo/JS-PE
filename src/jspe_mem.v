@@ -1,5 +1,5 @@
 `default_nettype none
-// Program/table memory (ARCH 2.3): 128x16 flops (D062 build), or the 512x16 SRAM macro with JSPE_MEM_SRAM.
+// Program/table memory (ARCH 2.3): 512x16 SRAM macro (D131), or the 128x16 flop fallback with JSPE_MEM_FLOP.
 module jspe_mem (
     input  wire        clk,
     input  wire        en,
@@ -8,7 +8,7 @@ module jspe_mem (
     input  wire [15:0] wdata,
     output wire [15:0] rdata
 );
-`ifndef JSPE_MEM_SRAM
+`ifdef JSPE_MEM_FLOP
   reg [15:0] mem [0:127];
   reg [6:0]  raddr;
   always @(posedge clk) begin

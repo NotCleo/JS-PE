@@ -16,7 +16,7 @@ if not ys:
 srcs = " ".join(sorted(glob.glob("src/*.v")))
 os.makedirs("build", exist_ok=True)
 js = "build/area.json"
-flow = f"read_verilog -sv -Isrc {srcs}; synth -top {top}; "
+flow = f"read_verilog -sv -Isrc {os.environ.get('MEMDEF', '')} {srcs}; synth -top {top}; "
 if lib:
     flow += f"dfflibmap -liberty {lib}; abc -liberty {lib}; opt_clean; tee -q -o {js} stat -json -liberty {lib}"
 else:

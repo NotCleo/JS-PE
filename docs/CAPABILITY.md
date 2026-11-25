@@ -9,7 +9,7 @@ All figures are from simulation: there are no board or silicon results yet. Each
 | Tag | Source |
 |---|---|
 | R | measured on the RTL in a cocotb lockstep test (the ISS agrees clock for clock) |
-| G | the same test passed on the post-layout netlist (GDS run 44625407065, `make gl-all`); most tests shorten their configuration list at gate level (e.g. UART rates: 1 Mbaud only) |
+| G | the same test passed on the post-layout netlist: shipped SRAM build GDS run 45553919240 (CI `gl_test`, 45/45) and the flop fallback run 44625407065 (`make gl-all`); most tests shorten their configuration list at gate level (e.g. UART rates: 1 Mbaud only) |
 | I | measured on the ISS in a pytest test |
 | B | limit from the assembler's static arming bound (checked against the ISS by T5/T6, D100) or from the program header's timing derivation, not run at that rate |
 
@@ -41,11 +41,12 @@ Batch 1 is the v1 scope (REQUIREMENTS). Batch 2 programs were chosen in Phase 1 
 | 5 | no arbitration check (single controller); SDA stuck low needs a host recovery step | i2c_ctrl.s header, D041 |
 | 6 | 1 MHz needs THD 5 and has a 13-clk high phase against a 14-clk bound: marginal | i2c_tgt.s header |
 | 8 | CVCHK = 0 has no code-violation check | manchester.s header, D099 |
-| 9 | uses all 128 words, so it runs alone on the flop build; ACK delimiter and EOF unchecked; 29-bit frames error-flagged; resync is a hard re-time on every recessive→dominant edge (an 8-clk glitch 28–72 clk into a recessive bit drops that bit → CRC error, retry); TEC/REC/bus-off on the host; host must read ≥ 1 byte per 8 CAN bits | can.s header, D102–D105 |
-| all | concurrency is limited by the 128-word memory: e.g. UART TX + RX (16 words) fit next to anything except CAN | ARCH 10, D062 |
+| 9 | 128 words: on the shipped 512-word SRAM build it fits next to UART TX + RX; on the flop fallback it fills the memory and runs alone; ACK delimiter and EOF unchecked; 29-bit frames error-flagged; resync is a hard re-time on every recessive→dominant edge (an 8-clk glitch 28–72 clk into a recessive bit drops that bit → CRC error, retry); TEC/REC/bus-off on the host; host must read ≥ 1 byte per 8 CAN bits | can.s header, D102–D105 |
+| all | programs that fit together: 512 words shared by 4 engines, e.g. CAN + UART TX + RX = 144 words, 4 engines, pads disjoint (`jspe_asm.py -D uart_tx.s:ENG=2 -D uart_rx.s:ENG=3 can.s uart_tx.s uart_rx.s` assembles with both deadlines ok; not yet run together in simulation); engines (4), not words, are now the usual limit. Flop fallback: 128 words, UART TX + RX fit next to anything except CAN | ARCH 10, D131 (D062 for the fallback) |
 
 ## 4. Change log of this table
 
 | Date | Rows | Note |
 |---|---|---|
 | 2026-11-20 | 1–9 | first version, from program headers, PROGRESS and the test files |
+| 2026-11-25 | G tag, 9, all | SRAM build shipped (D131): 512 words, G now also from run 45553919240 |

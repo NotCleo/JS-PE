@@ -23,10 +23,10 @@ The weak point is shared: ISS and RTL come from the same reading of the spec. Th
 | Bus models | [sw/tests/models.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/models.py) and cocotb wrappers | UART, SPI, I2C (UM10204 timing table), WS2812, Manchester, CAN node | protocol timing on the pads, written from the standards | used in every protocol test at ISS and RTL level |
 | Formal | SymbiYosys, [formal/](https://github.com/NotCleo/JS-PE/tree/main/formal) | 11 blocks (all but `jspe_alu`, `jspe_mem`) | spec properties for all reachable states (k-induction), every cover reached | 149 properties proven, 211 covers reached (section 3) |
 | Mutation | `make mutate`, [scripts/mutate.py](https://github.com/NotCleo/JS-PE/blob/main/scripts/mutate.py), [formal/mutants/](https://github.com/NotCleo/JS-PE/tree/main/formal/mutants) | hand-written RTL mutants per block | the proofs detect real faults | 213 mutants: 211 caught, 2 equivalent (explained in `formal/mutants/seq.yaml`) |
-| Gate-level simulation | `make gl-all` ([scripts/gl_all.py](https://github.com/NotCleo/JS-PE/blob/main/scripts/gl_all.py)), netlist of GDS run 44625407065 | all 45 system tests on the post-layout netlist with IHP cell models | no RTL-vs-netlist difference | PASS 45, FAIL 0, SKIP 0; 2 025 s with 8 jobs (D122, D123) |
-| STA | LibreLane / OpenROAD, GDS run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065) | 3 corners, 20 ns | setup and hold met | section 4 |
-| Physical | LibreLane, TT precheck | DRC, LVS, antenna, precheck | manufacturable | all pass (run 44625407065) |
-| IR drop | hand estimate, [docs/IR_DROP.md](https://github.com/NotCleo/JS-PE/blob/main/docs/IR_DROP.md) | power grid of run 44625407065 | drop within budget | worst per net 32.3 mV = 2.7 %; combined VDD+VSS worst 64.6 mV = 5.4 %, realistic 12.3 mV = 1.0 % (estimate) |
+| Gate-level simulation | CI `gl_test` on the netlist of GDS run [45553919240](https://github.com/NotCleo/JS-PE/actions/runs/45553919240) (SRAM build, with the PDK's SRAM model); `make gl-all` ([scripts/gl_all.py](https://github.com/NotCleo/JS-PE/blob/main/scripts/gl_all.py)) on run 44625407065 (flop fallback) | all 45 system tests on the post-layout netlist with IHP cell models | no RTL-vs-netlist difference | SRAM build 45/45 (D131); flop fallback PASS 45, FAIL 0, SKIP 0, 2 025 s with 8 jobs (D122, D123) |
+| STA | LibreLane / OpenROAD, GDS run [45553919240](https://github.com/NotCleo/JS-PE/actions/runs/45553919240) | 3 corners, 20 ns | setup and hold met | section 4 |
+| Physical | LibreLane, TT precheck | DRC, LVS, antenna, precheck | manufacturable | all pass (run 45553919240) |
+| IR drop | hand estimate, [docs/IR_DROP.md](https://github.com/NotCleo/JS-PE/blob/main/docs/IR_DROP.md); PSM | power grid of run 45553919240, macro grid included | drop within budget | worst per net 23.3 mV = 1.9 %; combined VDD+VSS worst 46.6 mV = 3.9 %, realistic 8.9 mV = 0.7 % (estimate); PSM 0.31 mV |
 
 ## 3. Formal results per block
 
@@ -48,20 +48,22 @@ From [formal/RESULTS.md](https://github.com/NotCleo/JS-PE/blob/main/formal/RESUL
 
 What the top-level proof gives: from any state, reset reaches the reset values with no X, and no pad drives until the host enables it (a_rst, a_safe). The link proofs show the D107 host obligations of the sequencer hold for *any* host, so no host rule is needed for them. Not covered formally: `jspe_alu` (engine lockstep only), `jspe_mem`, and anything at protocol level.
 
-## 4. Timing, physical and power sign-off (GDS run 44625407065)
+## 4. Timing, physical and power sign-off (GDS run 45553919240, SRAM build)
 
 | Check | Result | Source |
 |---|---|---|
-| Setup worst slack, slow / typ / fast | 1.183 / 8.105 / 12.128 ns, TNS 0 | PROGRESS sign-off record |
-| Hold worst slack, fast / typ / slow | 0.097 / 0.273 / 0.588 ns, TNS 0 | same |
-| Max slew / max cap | 2 slow-corner slew violations / 0 | same (VERIF_PLAN 9 asks for zero; see section 7) |
+| Setup worst slack, slow / typ / fast | 2.68 / 9.08 / 12.66 ns, TNS 0 | PROGRESS ledger, D131 |
+| Hold worst slack, fast / typ / slow | 0.105 / 0.284 / 0.602 ns, TNS 0 | same |
+| Max slew / max cap | 0 / 1 (SRAM pin `A_DOUT[13]` 0.081 vs 0.064 pF, all corners) | same (VERIF_PLAN 9 asks for zero; README limits, D131) |
 | DRC, LVS, antenna | pass | same |
 | TT precheck | pass | same |
-| Placed area | 692 464 µm² = 57.3 % of core (limit 60 %) | same; D051, D063 |
-| Power (typ) | 19.5 mW | same |
-| Fmax estimate | ≈ 53 MHz slow corner (estimate from 1.183 ns slack) | derived; no run at 16.7 ns |
+| Placed area | 457.9k µm² incl. macro = 37.9 % of core (limit 60 %) | same; D051 |
+| Power (typ) | 10.0 mW | same |
+| Fmax estimate | ≈ 57 MHz slow corner (estimate from 2.68 ns slack) | derived; no run at 16.7 ns |
 
-Timing closure history: run 5 (44246474825) green at 57.7 %; run 6 (AREA 0 synthesis + fanout 16, D119) failed slow setup −4.983 ns; run 7 (fanout 16 only, D120) failed −0.499 ns; D121 returned to the run-5 configuration and run 8 (with the D109 fix) is the sign-off run. GDS runs 1–2 failed PSM-0069 and run 3 (SRAM) failed LVS (D060–D062).
+Flop fallback (`-DJSPE_MEM_FLOP`, run 44625407065): setup 1.183 / 8.105 / 12.128 ns, hold 0.097 / 0.273 / 0.588 ns, 2 slow-corner slew violations, 692 464 µm² = 57.3 %, 19.5 mW.
+
+Timing closure history: run 5 (44246474825) green at 57.7 %; run 6 (AREA 0 synthesis + fanout 16, D119) failed slow setup −4.983 ns; run 7 (fanout 16 only, D120) failed −0.499 ns; D121 returned to the run-5 configuration and run 8 (with the D109 fix) signed off the flop build. GDS runs 1–2 failed PSM-0069 and run 3 (SRAM) failed LVS (D060–D062; cause corrected in D128: unconnected macro supply pins). The SRAM retry (D128–D130) passed on its second GDS attempt, run 45553919240, which is the shipped build (D131).
 
 ## 5. Protocol coverage
 
@@ -89,7 +91,7 @@ Test IDs refer to VERIF_PLAN 7–8. I = ISS (pytest), R = RTL lockstep (cocotb),
 | 45 system tests | `make test` |
 | formal | `make formal B=<block>` (arb, seq, pins, epins, fifo, link, top, timer, shift, sig, lfsr) |
 | mutation | `make mutate B=<block>` |
-| gate level | `make gl-fetch RUN=44625407065`, then `make gl-all` |
+| gate level | `make gl-fetch RUN=45553919240`, then `make gl-all` (flop fallback: `RUN=44625407065`, `MEM=flop`) |
 | area | `make area LIB=<sg13g2 typ liberty>` |
 
 ## 7. Known gaps

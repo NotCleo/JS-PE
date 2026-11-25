@@ -6,7 +6,7 @@ Code identifiers use the prefix jspe_ (the project's working name); the chip is 
 
 ## 1. The idea in one paragraph
 
-Four identical engines (E0–E3) run 16-bit `guard : operation` instructions from one shared 128 x 16 program memory. An engine holds one *armed* instruction and waits until its guard (a pin edge, a timer event, a FIFO level, a condition) is true; the whole operation then happens in that clock. Nothing protocol-specific is in hardware: the hardware gives events, a timer, a shifter with taps, an ALU, pin actions and byte FIFOs to the host, and the program decides what a "bit", a "frame" or an "acknowledge" is. The reaction from a pad edge to a pad change is 3–4 clk + pad (70–90 ns at 50 MHz) with no instruction fetch in between (ARCH 4.1, D081).
+Four identical engines (E0–E3) run 16-bit `guard : operation` instructions from one shared 512 x 16 program memory (an IHP SRAM macro). An engine holds one *armed* instruction and waits until its guard (a pin edge, a timer event, a FIFO level, a condition) is true; the whole operation then happens in that clock. Nothing protocol-specific is in hardware: the hardware gives events, a timer, a shifter with taps, an ALU, pin actions and byte FIFOs to the host, and the program decides what a "bit", a "frame" or an "acknowledge" is. The reaction from a pad edge to a pad change is 3–4 clk + pad (70–90 ns at 50 MHz) with no instruction fetch in between (ARCH 4.1, D081).
 
 ## 2. Block diagram
 
@@ -29,7 +29,7 @@ Four identical engines (E0–E3) run 16-bit `guard : operation` instructions fro
    │ jspe_arb: slot counter, slot map, address mux   │◄─────────┤ jspe_link │  H_TX  = uo_out[4]
    └────────────────────┬────────────────────────────┘ host req └───────────┘  H_RDY = uo_out[5]
                    ┌────▼─────┐
-                   │ jspe_mem │  128x16 flops (built); 512x16 SRAM macro is a deferred retry
+                   │ jspe_mem │  512x16 SRAM macro (shipped, D131); 128x16 flops with -DJSPE_MEM_FLOP
                    └──────────┘
 ```
 
@@ -50,15 +50,15 @@ Area: `make area LIB=<sg13g2 typ liberty>` (yosys + abc, typical corner, synthes
 | [jspe_epins](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_epins.v) | 4 logical pins: bind, edges, pin state | 4 | 294 | 5 089 | 9 properties, k=2; 26/26 mutants | engine lockstep |
 | [jspe_link](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_link.v) | host link: UART framing, commands, registers, streams | 1 | 1 508 | 23 803 | 20 properties, k=2 (+ bmc 16 cut tasks); 34/34 mutants | [test_jspe_link.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_link/test_jspe_link.py) (5) |
 | [jspe_pins](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_pins.v) | sync, filter, pad config, owner mux, pad registers | 1 | 728 | 17 625 | 10 properties, k=4; 20/20 mutants | [test_jspe_pins.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_pins/test_jspe_pins.py) (7) |
-| [jspe_mem](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_mem.v) | 128 x 16 program/table memory (flops) | 1 | 5 002 | 162 095 | none | none (top-level tests) |
+| [jspe_mem](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_mem.v) | 512 x 16 program/table memory: IHP `RM_IHPSG13_1P_512x16` macro (45 309 µm², not in the cell count); flop fallback 128 x 16: 5 002 cells / 162 095 µm² | 1 | 2 | 5 | none | none (top-level tests) |
 | [jspe_fifo](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_fifo.v) | 4-deep byte FIFO; RX W=8, TX W=9 | 4 + 4 | 138 / 151 | 2 959 / 3 273 | 8 properties, k=2, both widths; 14/14 mutants | [test_jspe_fifo.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_fifo/test_jspe_fifo.py) (8) |
 | [jspe_arb](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_arb.v) | memory slot arbiter | 1 | 150 | 1 612 | 15 properties, k=4; 6/6 mutants | [test_jspe_arb.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_arb/test_jspe_arb.py) (9) |
 | [jspe_lfsr](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_lfsr.v) | shared 32-bit LFSR / CRC | 1 | 366 | 6 310 | 5 properties, k=2; 11/11 mutants | [test_jspe_lfsr.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_lfsr/test_jspe_lfsr.py) (8) |
 | [jspe_sig](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_sig.v) | 8 inter-engine signal flags | 1 | 57 | 862 | 5 properties, k=2; 8/8 mutants | [test_jspe_sig.py](https://github.com/NotCleo/JS-PE/blob/main/test/unit/jspe_sig/test_jspe_sig.py) (7) |
 
-Totals from the same run: one engine 52 049 µm² (x 4 = 208 195), logic without memory 283 465 µm², full top 23 669 cells / 445 560 µm² synthesized. After place and route (GDS run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065), PROGRESS ledger): 692 464 µm² placed = 57.3 % of the 1 208 170 µm² core (limit 60 %, D051/D063), 46 813 cells, of which 4 387 flip-flops. The memory alone is 36 % of the synthesized area; the 512 x 16 SRAM macro (45.3k µm²) failed LVS in run 3 and is a deferred retry (D062).
+Totals: one engine 52 049 µm² (x 4 = 208 195); shipped SRAM build 18 802 cells / 283 014 µm² synthesized (`make area`, 2026-11-25) + the 45 309 µm² macro. After place and route (GDS run [45553919240](https://github.com/NotCleo/JS-PE/actions/runs/45553919240), D131): 457.9k µm² placed including the macro = 37.9 % of the 1 208 170 µm² core (limit 60 %, D051). The macro failed LVS in run 3 because pdngen left its supply pins unconnected (D128); a macro power grid on all 40 supply columns fixed it (D128–D130). Flop fallback (`-DJSPE_MEM_FLOP`, D062): 23 669 cells / 445 560 µm² synthesized, 692 464 µm² placed = 57.3 % (run [44625407065](https://github.com/NotCleo/JS-PE/actions/runs/44625407065)); there the memory alone is 36 % of the synthesized area.
 
-Generated file: [src/jspe_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_isa.vh) holds the encodings, written by [sw/gen_isa.py](https://github.com/NotCleo/JS-PE/blob/main/sw/gen_isa.py) from [docs/spec/isa.yaml](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/isa.yaml). [src/RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v](https://github.com/NotCleo/JS-PE/blob/main/src/RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v) is the macro's black box, used only with `-DJSPE_MEM_SRAM`.
+Generated file: [src/jspe_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/src/jspe_isa.vh) holds the encodings, written by [sw/gen_isa.py](https://github.com/NotCleo/JS-PE/blob/main/sw/gen_isa.py) from [docs/spec/isa.yaml](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/isa.yaml). [src/RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v](https://github.com/NotCleo/JS-PE/blob/main/src/RM_IHPSG13_1P_512x16_c2_bm_bist_bb.v) is the macro's black box for synthesis and lint (simulation uses the PDK model in test/ihp_sram); unused with `-DJSPE_MEM_FLOP`.
 
 ## 4. Shared blocks
 
@@ -66,7 +66,7 @@ Generated file: [src/jspe_isa.vh](https://github.com/NotCleo/JS-PE/blob/main/src
 |---|---|---|
 | Pins (ARCH 2.1) | Every input: pad → 2 FF → optional 3-sample filter → `lvl[15:0]`. Every output pad has a 7-bit host-only config `PAD[j]`: enable, open-drain, invert, owning engine, logical pin. Exactly one (engine, pin) owns a pad, so two engines can never drive one pad. | filter +2 clk, removes pulses < 40 ns; `en` is host-only, so a program loaded with all `en` = 0 cannot drive anything (monitor guarantee) |
 | Arbiter (ARCH 2.2) | One memory port, four slots. A 2-bit counter picks the slot owner from the 8-bit SLOTMAP; an unused slot serves the host. | default `0xE4` = one slot per engine every 4 clk (max wait 3 clk); `0x00` = solo, E0 every clock |
-| Memory (ARCH 2.3) | 128 x 16 flops, read data one clock after the grant. Holds code, `.word` tables and buffers of every engine; no protection. | addresses alias modulo 128; contents undefined after reset or deselect |
+| Memory (ARCH 2.3) | 512 x 16 single-port SRAM macro, read data one clock after the grant. Holds code, `.word` tables and buffers of every engine; no protection. | 9-bit addresses, 512 words (flop fallback: 128 words, alias modulo 128); contents undefined after reset or deselect |
 | FIFOs (ARCH 2.4) | Per engine an RX FIFO (host → engine, 8 bit) and a TX FIFO (engine → host, 9 bit; bit 8 marks an event code). | depth 4; write to full / read of empty is ignored and sets the engine's sticky OVR |
 | Host link (ARCH 2.5) | UART-style link to the RP2350: framing, commands, registers, memory access, stream multiplexing. See [HOST_INTERFACE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md). | 8N1 at 16, 8 or 4 clk per bit; H_RDY flow control |
 | Signal flags (ARCH 2.6) | Eight flags G0–G7 that engines set/clear and read as if they were pins (level, rise, fall). | clear wins over set; the host can write all eight |
@@ -109,7 +109,7 @@ Every program states its timing assumptions; the assembler proves, per path, tha
 
 | Space | Size | Contents |
 |---|---|---|
-| Program/table memory | 128 x 16 (9-bit addresses, alias modulo 128) | code, `.word` tables, buffers of all engines |
+| Program/table memory | 512 x 16 (9-bit addresses; flop fallback 128 x 16, alias modulo 128) | code, `.word` tables, buffers of all engines |
 | Engine registers | 8 per engine | R0, R1, R2, S, P, C, T, L |
 | Engine configuration | index 0–8 | SHCFG, TAPCFG, TCFG, BIND01, BIND23, CC0, CC1, WV0, WV1 |
 | Shared configuration | index 16–21 | LFSR_LO/HI, POLY_LO/HI, LFCFG; SIG read-only |
@@ -125,4 +125,4 @@ Initialisation code does not use memory: the assembler emits it as host-injected
 
 ## 9. Timing closure
 
-Sign-off figures from GDS run 44625407065 (PROGRESS ledger), `CLOCK_PERIOD` 20 ns: setup worst slack 1.183 ns (slow) / 8.105 (typ) / 12.128 (fast); hold worst slack 0.097 ns (fast) / 0.273 (typ) / 0.588 (slow); TNS 0. 60 MHz was a stretch goal (D007): ≈ 53 MHz slow corner (estimate from 1.183 ns slack; no run at 16.7 ns). How timing was closed (runs 5–8, D081, D119–D121): [VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) and [DESIGN_RATIONALE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DESIGN_RATIONALE.md).
+Sign-off figures from GDS run 45553919240 (shipped SRAM build, D131), `CLOCK_PERIOD` 20 ns: setup worst slack 2.68 ns (slow) / 9.08 (typ) / 12.66 (fast); hold worst slack 0.105 ns (fast) / 0.284 (typ) / 0.602 (slow); TNS 0; max slew 0, max cap 1 (macro pin `A_DOUT[13]`, README limits). 60 MHz was a stretch goal (D007): ≈ 57 MHz slow corner (estimate from 2.68 ns slack; no run at 16.7 ns). Flop fallback, run 44625407065: setup 1.183 / 8.105 / 12.128 ns, hold 0.097 / 0.273 / 0.588 ns. How timing was closed (runs 5–8, D081, D119–D121): [VERIFICATION.md](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICATION.md) and [DESIGN_RATIONALE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/DESIGN_RATIONALE.md).

@@ -24,7 +24,7 @@ from models import UartSender, uart_decode, ws2812_decode   # noqa: E402
 ESC = 0x1B
 ID = 0x4A10
 CLK = 50e6
-MEM_WORDS = int(os.environ.get("JSPE_MEM_WORDS", "128"))
+MEM_WORDS = int(os.environ.get("JSPE_MEM_WORDS", "512"))
 GL = os.environ.get("GATES") == "yes"
 FULL = os.environ.get("JSPE_UART_FULL") == "1"
 IDLE_UI = 0x88                                       # H_RX and RXD idle high

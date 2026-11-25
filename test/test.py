@@ -12,7 +12,7 @@ from cocotb.triggers import ClockCycles, FallingEdge, RisingEdge
 
 ESC = 0x1B
 ID = 0x4A10
-MEM_WORDS = int(os.environ.get("JSPE_MEM_WORDS", "128"))  # 512 with -DJSPE_MEM_SRAM
+MEM_WORDS = int(os.environ.get("JSPE_MEM_WORDS", "512"))  # 128 with the flop fallback (JSPE_MEM=flop)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROG = os.path.join(ROOT, "docs", "spec", "programs")
 sys.path.insert(0, os.path.join(ROOT, "sw"))

@@ -1,8 +1,8 @@
 # I2C demo (PINS.md 3.4): i2c_tgt.s on E0 is a target at 0x42 on SCL uio[6] (GPIO31), SDA uio[5] (GPIO30); the
 # RP2350 is the controller (SoftI2C, which waits while the chip stretches SCL). Pull-ups: the Pmod's 2 x 4.7 kOhm, or
 # the RP2350 internal ones at 100 kHz (functional only, D005). Chip against the RP2350 only: the independent I2C
-# models are in test/test_i2c.py. On the PC (fallback build, 128 words):
-#   python sw/jspe_asm.py -D ORG=80 --mem 128 docs/spec/programs/i2c_tgt.s -o i2c
+# models are in test/test_i2c.py. On the PC (add -D ORG=80 --mem 128 for the flop fallback):
+#   python sw/jspe_asm.py docs/spec/programs/i2c_tgt.s -o i2c
 # Copy i2c.bin and host/jspe.py to the board, then run this file.
 import time
 import machine

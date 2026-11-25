@@ -266,5 +266,5 @@ SHOULD items with tests: concurrency C1, C2; monitor MON1; error injection EI1; 
 - ISS and RTL come from the same reading of the spec. Countered by the independent protocol checkers, the formal properties written from ARCH.md, and the reviewer pass per block.
 - Asynchronous inputs: only sub-clock phase is swept; metastability and analog edges (I2C rise) are delays in the pad model.
 - Slow rates are long in simulation (1 200 baud = 417 000 clk per character): long streams at L1 only, one character at L3.
-- SRAM macro: failed LVS in Phase 5 (D062); the flop build is current and the macro is a deferred retry (section 9). Behavioural model kept for `-DJSPE_MEM_SRAM`. The fallback build keeps every test runnable.
+- SRAM macro: failed LVS in Phase 5 (D062, cause corrected in D128); the retry (D128–D130) passed and the SRAM build ships (D131), simulated with the PDK behavioural model. The flop fallback (`-DJSPE_MEM_FLOP`, `make test MEM=flop`) keeps every test runnable.
 - Monitor and error-injection programs do not exist yet (Phase 7); their tests are SHOULD.

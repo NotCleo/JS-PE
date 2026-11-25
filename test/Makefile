@@ -10,16 +10,19 @@ PROJECT_SOURCES = tt_um_notcleo_jspe.v jspe_pins.v jspe_link.v jspe_mem.v jspe_e
 # PDK behavioural model of the SRAM macro (Apache-2.0, vendored: the CI test job has no PDK)
 SRAM_MODELS = $(PWD)/ihp_sram/RM_IHPSG13_1P_core_behavioral_bm_bist.v $(PWD)/ihp_sram/RM_IHPSG13_1P_512x16_c2_bm_bist.v
 
+# separate build dirs: the memory define does not trigger a rebuild
+MEMSUF = $(if $(filter flop,$(JSPE_MEM)),_flop)
+
 ifneq ($(GATES),yes)
 
 # RTL simulation:
-SIM_BUILD				= sim_build/rtl
+SIM_BUILD				= sim_build/rtl$(MEMSUF)
 VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
 
 else
 
 # Gate level simulation:
-SIM_BUILD				= sim_build/gl
+SIM_BUILD				= sim_build/gl$(MEMSUF)
 COMPILE_ARGS    += -DGL_TEST
 COMPILE_ARGS    += -DFUNCTIONAL
 COMPILE_ARGS    += -DSIM
@@ -39,7 +42,11 @@ endif
 
 VERILOG_SOURCES += $(SRAM_MODELS)
 COMPILE_ARGS    += -DSIM -DFUNCTIONAL $(JSPE_DEFINES)
-# SRAM build: make JSPE_DEFINES=-DJSPE_MEM_SRAM JSPE_MEM_WORDS=512 (D062)
+# SRAM build by default (D131); flop fallback: make JSPE_MEM=flop (128 words)
+ifeq ($(JSPE_MEM),flop)
+COMPILE_ARGS    += -DJSPE_MEM_FLOP
+export JSPE_MEM_WORDS = 128
+endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
