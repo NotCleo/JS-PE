@@ -10,7 +10,7 @@ Two Cleo images; the host loads and watches.
 The consumer binds one logical pin's input to G0 (BIND source 16; output stays CS/TXD), waits `@c0`. Not `@rise`: `sset` on a set flag makes no edge. Producer: `st`, then `sset #0`; consumer: `ld`, then `sclr #0`.
 
 ## Memory map
-Word 0 = `halt` + `jmp 0` (reset PC = 0, D109); code from word 2; buffer at 512−N…511 (`.org`, `.word`/`.space`), `.assert` code end ≤ 512 − N. Pointers run 0x10000 − N…0xFFFF (bits [8:0] = buffer); `add #1` + `or` wraps branch-free.
+Word 0 = `halt` + `jmp 0` (reset PC = 0, D109); code from word 2. Data from the chip-wide map (MEMMAP.md, `cleo_mem.inc`, D209): ring at `BR_RING` = 480…511, mailbox at `BR_MBOX` = 479, each claimed with `.reserve` (no other program may use it) and `.assert` code end below it. Pointers run 0x10000 − N…0xFFFF (bits [8:0] = buffer); `add #1` + `or` wraps branch-free.
 
 ## UART → SPI: ring
 Ring of N = 32, loaded free (bit 15 = 1) by the image. A received byte has bit 15 = 0; the consumer frees a slot by storing the wrap mask.

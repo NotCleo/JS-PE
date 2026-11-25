@@ -14,7 +14,7 @@ def build(name, m, **defs):
     # the slot map is a source directive: append it so the bound is computed for this map
     src = open(os.path.join(PROG, name + ".s")).read()
     src += "\n.slots %s\n" % ", ".join(str((m >> (2 * s)) & 3) for s in range(4))
-    return assemble_text(src, {k: str(v) for k, v in defs.items()}, name=name + ".s")
+    return assemble_text(src, {k: str(v) for k, v in defs.items()}, name=os.path.join(PROG, name + ".s"))
 
 
 def sc_uart_rx(img, ph, pp, eng):

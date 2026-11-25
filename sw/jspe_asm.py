@@ -229,6 +229,7 @@ def split_args(s):
 class Image:
     def __init__(self):
         self.words, self.src, self.owner = {}, {}, {}
+        self.reserved = {}       # address -> (file, line) of a .reserve: no other file may use it
         self.engines = {}
         self.slotmap = None
         self.filt = 0
@@ -330,9 +331,29 @@ def pad_index(name):
 
 
 # ---------------- assembler core ----------------
+def expand_includes(path, text, depth=0):
+    out = []
+    for ln, raw in enumerate(text.splitlines(), 1):
+        m = re.match(r'\s*\.include\s+"([^"]+)"\s*(;.*)?$', raw, re.I)
+        if not m:
+            out.append((path, ln, raw))
+            continue
+        inc = os.path.join(os.path.dirname(path), m.group(1))
+        if depth >= 8:
+            raise AsmError("%s:%d: .include nested too deep" % (os.path.basename(path), ln))
+        try:
+            with open(inc) as f:
+                body = f.read()
+        except OSError:
+            raise AsmError("%s:%d: cannot open %s" % (os.path.basename(path), ln, m.group(1)))
+        out += expand_includes(inc, body, depth + 1)
+    return out
+
+
 class FileCtx:
     def __init__(self, path, text, defines):
-        self.path, self.lines = path, text.splitlines()
+        self.path = path
+        self.src = expand_includes(path, text)     # (origin file, line, text) after .include
         self.defines = defines
         self.equ = {}
 
@@ -373,7 +394,7 @@ class Assembler:
             self.last_g = self.last_x = None
             conds = []
             loop = None
-            for ln, raw in enumerate(fc.lines, 1):
+            for opath, ln, raw in fc.src:
                 self.ln = ln
                 line = strip_comment(raw)
                 try:
@@ -446,7 +467,7 @@ class Assembler:
                     else:
                         self.instruction(body, raw)
                 except AsmError as e:
-                    raise AsmError("%s:%d: %s" % (os.path.basename(path), ln, e))
+                    raise AsmError("%s:%d: %s" % (os.path.basename(opath), ln, e))
             if conds:
                 raise AsmError("%s: missing .endif" % os.path.basename(path))
             if loop is not None:
@@ -512,6 +533,17 @@ class Assembler:
             if not 0 <= v < 512:
                 raise AsmError(".org out of range")
             self.lc = v
+        elif d == ".reserve":
+            if len(a) != 2:
+                raise AsmError(".reserve addr, n")
+            base, n = self.ev(a[0]), self.ev(a[1])
+            if n < 1 or not 0 <= base or base + n > min(512, self.mem):
+                raise AsmError(".reserve out of range")
+            for x in range(base, base + n):
+                for tab in (img.reserved, img.src):
+                    if x in tab and tab[x][0] != self.fc.path:
+                        raise AsmError("reserved word %d already used by %s:%d" % (x, os.path.basename(tab[x][0]), tab[x][1]))
+                img.reserved[x] = (self.fc.path, self.ln)
         elif d == ".word":
             for x in a:
                 self.store(self.ev(x) & 0xFFFF, raw)
@@ -612,6 +644,9 @@ class Assembler:
         if a in img.words:
             f, ln, _ = img.src[a]
             raise AsmError("address %d already used by %s:%d" % (a, os.path.basename(f), ln))
+        if a in img.reserved and img.reserved[a][0] != self.fc.path:
+            f, ln = img.reserved[a]
+            raise AsmError("address %d reserved by %s:%d" % (a, os.path.basename(f), ln))
         img.words[a] = w
         img.src[a] = (self.fc.path, self.ln, raw)
         img.owner[a] = self.engine

@@ -9,7 +9,7 @@
 ;   EV_INACK when the host ACKed the armed buffer. Bus reset: RP2350 reads uio4/uio5 on its GPIOs (SE0 >= 2.5 us).
 ; LIMITS: no stuff-error check (CRC / key compare catch it); a token key equal to 0, 0xFFFF or 0xB001 aliases.
 ; builds (the option defaults follow MEMWORDS; any -D overrides one):
-;   512 words (SRAM, default, D204)                = -D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1 -> 142 words
+;   512 words (SRAM, default, D204)                = -D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1 -> 145 words (buffer at USB_BUF >= 256: 3 two-word li)
 ;   128 words (flop fallback): -D MEMWORDS=128 --mem 128 = -D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0 -> 128 words
 ;   128: no PID check, crossover SE0 skew <= 8 clk (167 ns), D+ read back; 512: all on, skew <= 10 clk (210 ns).
 
@@ -32,9 +32,10 @@
 .equ EV_OK,  1
 .equ EV_CRC, 2
 .equ EV_INACK, 3
+.include "cleo_mem.inc"
+.equ BUF,    USB_BUF * (MEMWORDS > 128) + USB_BUF_FLOP * (MEMWORDS == 128)  ; MEMMAP.md; >= 256: li is 2 words
 .equ ORG_TX, 0
-.equ ORG_RX, 46 + 2 * TXJK
-.equ BUF,    118 + 128 * (MEMWORDS > 128)   ; < 256: one-word li; 246 catches MEMWORDS 512 with --mem 128
+.equ ORG_RX, 46 + 2 * TXJK + (BUF > 255)
 .equ KEY0,   BUF + 7
 .equ BUFKEY, BUF + 8
 .equ KEY1,   BUF + 9
@@ -271,6 +272,7 @@ indat:  li    R2, #2
         jmp   txw
 
 ; ---------------- RP2350-written memory ----------------
+.reserve BUF, USB_BUF_N
 .org BUF
 inbuf:  .space 7                        ; IN buffer
 keys:   .word 0x7C00, 0, 0x0860         ; KEY0, BUFKEY, KEY1 of address 0 (bus-reset state)

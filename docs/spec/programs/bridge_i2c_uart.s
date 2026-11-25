@@ -1,5 +1,5 @@
 ; bridge_i2c_uart.s - on-chip bridge: I2C target writes (E0) -> mailbox -> UART TX (E1); no host in the data path
-; words: 30 code (park 2, E0 20, E1 8) + 1 mailbox at 511 | engines: 2 | flag: G0 = mailbox full
+; words: 30 code (park 2, E0 20, E1 8) + 1 mailbox at BR_MBOX (MEMMAP.md) | engines: 2 | flag: G0 = mailbox full
 ; max: I2C limits while UART is faster: 38.8 kB/s at 400 kHz, 9.96 kB/s at 100 kHz (12-byte writes incl. START, address,
 ;       STOP; UBIT 50)
 ; pins: E0 p0 = SCL uio6 (od), p1 = SDA uio5 (od), p2 = G0; E1 p0 = TXD uo0, p1 = G0
@@ -15,7 +15,8 @@
 .equ THD,    13
 .equ TSU,    20
 .equ UBIT,   50
-.equ MBOX,   511
+.include "cleo_mem.inc"
+.equ MBOX,   BR_MBOX
 
 .engine 0
 .pad uio6, p0, od
@@ -98,6 +99,7 @@ uidle:  @c0   : nop
         @tick : p0 <- 1                 ; stop bit
         jmp   uidle
 cend:
+.reserve MBOX, 1
 .org MBOX
 mbox:   .space 1
 .assert cend <= MBOX, "code overlaps the mailbox"

@@ -2,7 +2,7 @@
 import os, random, struct, subprocess, sys
 import pytest
 from harness import SW, ROOT, PROG, prog, assemble, assemble_text, decode, AsmError
-from jspe_asm import encode, INSTR, ISA
+from jspe_asm import encode, INSTR, ISA, Assembler
 
 WORDS = {"uart_tx": 8, "uart_rx": 8, "spi_ctrl": 18, "spi_tgt": 20, "i2c_ctrl": 41, "i2c_tgt": 32, "ws2812": 9,
          "manchester": 23}
@@ -68,6 +68,36 @@ def test_mem_limit_and_overlaps():
         assemble_text(".engine 0\n.pad uio1, p0\n.engine 1\n.pad uio1, p2\n")
     with pytest.raises(AsmError, match="second .slots"):
         assemble_text(".slots 0,1,2,3\n.slots 0,0,0,0\n")
+
+def memmap_regions():
+    import re
+    m = {k: int(v) for k, v in re.findall(r"^\.equ\s+(\w+),\s*(\d+)", open(os.path.join(PROG, "cleo_mem.inc")).read(), re.M)}
+    return m, [(m["USB_BUF"], m["USB_BUF_N"]), (m["FAULT_W"], m["FAULT_N"]), (m["BR_MBOX"], 1), (m["BR_RING"], m["BR_RING_N"])]
+
+
+def test_memmap_disjoint_above_code():
+    m, regs = memmap_regions()
+    words = [a for b, n in regs for a in range(b, b + n)]
+    assert len(words) == len(set(words)) and min(words) == m["MEM_DATA"] and max(words) == 511
+
+
+def test_reserve_and_include_overlap_check():
+    inc = '.include "%s"\n' % os.path.join(PROG, "cleo_mem.inc")
+    br = [os.path.join(PROG, "bridge_i2c_uart.s"), os.path.join(PROG, "bridge_uart_spi.s")]
+    m, _ = memmap_regions()
+    with pytest.raises(AsmError, match="reserved word %d already used by bridge_i2c_uart.s" % m["BR_MBOX"]):
+        Assembler([(br[0], open(br[0]).read()), ("evil.s", inc + ".engine 2\n.reserve BR_MBOX - 1, 2\n")]).run()
+    with pytest.raises(AsmError, match="address %d reserved by evil.s" % m["FAULT_W"]):
+        Assembler([("evil.s", inc + ".reserve FAULT_W, FAULT_N\n"), ("code.s", inc + ".org FAULT_W\n.word 0\n")]).run()
+    with pytest.raises(AsmError, match="reserved word %d already used by code.s" % m["MEM_DATA"]):
+        Assembler([("code.s", ".org %d\nnop\n" % m["MEM_DATA"]), ("usb.s", inc + ".reserve USB_BUF, USB_BUF_N\n")]).run()
+    img = assemble_text(inc + ".reserve FAULT_W, 1\n.org FAULT_W\n.word 7\n")      # own region: may store
+    assert img.words[m["FAULT_W"]] == 7
+    with pytest.raises(AsmError, match="cannot open nothere.inc"):
+        assemble_text('.include "nothere.inc"\n')
+    with pytest.raises(AsmError, match=r"cleo_mem.inc:\d+: 'MEM_DATA' defined twice"):
+        assemble_text(inc + inc)
+
 
 
 @pytest.mark.parametrize("src,msg", [

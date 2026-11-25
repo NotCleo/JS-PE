@@ -36,7 +36,7 @@ class UBench(Bench):
 async def test_u1_control_read(dut):
     b = await nbench(dut, 201, cls=UBench)
     defs = dict(d.split("=") for d in os.environ.get("USB_DEFS", "").split())      # build options, e.g. USB_DEFS="TXJK=1 EOPCHK=0"
-    img = Assembler([("usb_ls.s", open(PROG + "/usb_ls.s").read())], defs).run()
+    img = Assembler([(PROG + "/usb_ls.s", open(PROG + "/usb_ls.s").read())], defs).run()
     img.clk = None                                     # cycle-level lockstep (see header)
     await b.load(img)
     await b.set_link(0)                                # 16 clk per bit: the USB demo baseline

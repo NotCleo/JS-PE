@@ -98,6 +98,7 @@ Removed in the trim of D048 (now trap): `stgl`, `sbc`, `swap`, `not`, `wcfg SIG`
 | Directive | Meaning |
 |---|---|
 | `.equ`, `.org`, `.word`, `.space` | constants, location, data |
+| `.reserve addr, n`, `.include "file"` | claim a data region (no other file may use it, [MEMMAP](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/MEMMAP.md)); insert a shared file such as `cleo_mem.inc` |
 | `.engine n` | following `.init`, `.entry`, `.pad` and code belong to engine n |
 | `.init` … `.code` | initialisation emitted as host-injected instructions (no memory used) |
 | `.entry label` | injected `jmp label` after `.init` |

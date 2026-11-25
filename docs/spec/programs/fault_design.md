@@ -3,7 +3,7 @@
 Variants `-D FAULTS=1`; the default (`FAULTS = 0`) image is byte-identical (tested).
 
 ## Fault word
-`FW = 508 + ENG`, one per engine (124–127 on the 128-word build). FAULTS images place `.word 0` there and `.assert` code ends below it. Not combinable with the bridges (480–511).
+`FW = FAULT_W + ENG` = 475…478 (MEMMAP.md, `cleo_mem.inc`), 512-word build only. FAULTS images `.reserve FW, 1` and place `.word 0` there; the assembler rejects any other program's use of it, so they combine with the bridges and usb_ls.
 
 | Bits | Field |
 |---|---|
@@ -12,7 +12,7 @@ Variants `-D FAULTS=1`; the default (`FAULTS = 0`) image is byte-identical (test
 | 11:8 | POS: byte in the transaction |
 | 7:0 | ARG: count, length, bit or mask |
 
-The host writes FW only between transactions; the program reads it once per transaction (UART before the start bit, I2C after the address compare, SPI after CS falls, CAN at frame pull) and writes 0 when the fault is done: it fires once, and `RDMEM FW` = 0 confirms it. Pointer `0xFFFC + ENG`: a spare register from `.init`, else `li` + `lih`.
+The host writes FW only between transactions; the program reads it once per transaction (UART before the start bit, I2C after the address compare, SPI after CS falls, CAN at frame pull) and writes 0 when the fault is done: it fires once, and `RDMEM FW` = 0 confirms it. Pointer `FW`: a spare register from `.init`, else `li` + `lih` (FW ≥ 256).
 
 ## Faults
 | Program | TYPE | Effect | Receiver reports |

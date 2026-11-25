@@ -47,7 +47,7 @@ Right form, POLY 0xA001, LFSR_HI 0, set in `.init`; both engines set `lfen`. Hal
 | Buffer + keys | 11 | 10 |
 | Total | 109 | **127 / 128**; `-D OWNCHK=0`: **120** |
 | Step 6: inline byte loop, `ecrc` before `hunt` | | −2 → 125 (`EOPCHK` 0, `TXJK` 0) |
-| Builds (§12) | | 128 words: **128** (`EOPCHK` 1 +3); 512 words: **142** (`PIDCHK` +8, `EOPCHK` 3 +7, `TXJK` +2) |
+| Builds (§12) | | 128 words: **128** (`EOPCHK` 1 +3); 512 words: **145** (`PIDCHK` +8, `EOPCHK` 3 +7, `TXJK` +2, buffer at `USB_BUF` ≥ 256 +3) |
 
 Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7; it also NAKs INs for other LS devices behind the same hub, which collides there). Options in 128 words: `-D OWNCHK=0 -D PIDCHK=1 -D EOPCHK=0` = 126 (PID checks, no SE0 confirm); `-D TXJK=1 -D EOPCHK=0` = 127. The 512-word build is chosen with `-D MEMWORDS=512 --mem 512` (§12).
 
@@ -78,9 +78,9 @@ All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound v
 - A bus reset in the middle of a SETUP/OUT closes the pending data packet as EV_CRC (no bytes); the next SETUP works at once (tested).
 
 ## 12. Builds and slow edges (step 6)
-`MEMWORDS` sets the defaults; each is overridable with `-D`. Default sets: 512 words (default since D204, the shipped SRAM build) = `-D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1` (142 words, all checks on); 128 words (flop fallback, `-D MEMWORDS=128 --mem 128`) = `-D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0` (128 words). BUF = 118 or 246 (one-word `li`; 246 also makes a 512 build fail at `--mem 128`).
+`MEMWORDS` sets the defaults; each is overridable with `-D`. Default sets: 512 words (default since D204, the shipped SRAM build) = `-D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1` (142 words, all checks on); 128 words (flop fallback, `-D MEMWORDS=128 --mem 128`) = `-D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0` (128 words). BUF = `USB_BUF_FLOP` 118 (128 words, one-word `li`) or `USB_BUF` 465 (512 words, MEMMAP.md, D209: `li` is two words, +3; also makes a 512 build fail at `--mem 128`).
 
-| Option | 128 words (128) | 512 words (142) | Words |
+| Option | 128 words (128) | 512 words (145) | Words |
 |---|---|---|---|
 | `OWNCHK` NAK only our address | 1 | 1 | +7 |
 | `PIDCHK` exact PIDs | 0: corrupted PID → RP2350 STALLs (§11 d) | 1 | +8 |

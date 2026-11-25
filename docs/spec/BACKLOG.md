@@ -30,7 +30,7 @@ Triage of a private list of questions and ideas (planning notes, not in the repo
 | Note said | Repo says |
 |---|---|
 | Memory 128 words; CAN fills it | 512 words since D131; CAN + UART TX + RX = 144 words measured together (CAPABILITY "all"). All ten programs = 429 words. |
-| USB LS is future work | Done: usb_ls.s, CAPABILITY row 10, D200–D204 (512-word default build, 142 words). |
+| USB LS is future work | Done: usb_ls.s, CAPABILITY row 10, D200–D204 (512-word default build, 145 words since D209). |
 | 21 protocol pads = 8 `ui_in` + 5 `uo_out` + 8 `uio` | 7 `ui_in` (H_RX = `ui_in[3]`) + 6 `uo_out` (H_TX, H_RDY = `uo_out[4:5]`) + 8 `uio` = 21 (PINS 2). |
 | Load order: REG (SLOTMAP, FILT, PAD) before MEM | CLK, RST, SLOTMAP, MEM + read-back, FILT, PAD `en` = 0, EXEC, PAD `en` = 1, RUN (HOSTIF 7). |
 | Faster link needs a chip LINK mode (verify) | LINK = 8 and 4 clk/bit exist on chip (HOSTIF 1); only the RP2350 PIO side is missing (ROADMAP_V2 item 0). |

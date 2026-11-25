@@ -3,7 +3,7 @@
 ; max: UBIT 14 = 3.57 Mbaud with senders at -2 %, 0, +2 %, every byte exact in all 4 slot phases (sw/tests/test_bridge.py)
 ; pins: E1 p0 = RXD (ui_in[RXPIN], no pad); E0 p0 = SCK uio3, p1 = CS uio0, p2 = MOSI uio1 (MISO not used)
 ; UART 8N1, UBIT clk/bit; SPI mode 0, MSB first, one byte per CS, BIT clk/bit, CS high >= CSDLY clk between bytes
-; ring: N slots at 512-N..511, initialised free (bit 15 = 1); a byte (bit 15 = 0) marks its slot full;
+; ring: N slots at BR_RING..511 (MEMMAP.md), initialised free (bit 15 = 1); a byte (bit 15 = 0) marks its slot full;
 ;       overrun when slot[WP] is still full at the start bit
 ; host: E1 event 1 = framing error (byte still forwarded), event 2 = overrun (byte dropped); nothing else
 ; rate: SPI byte period P = 9*BIT + 3*CSDLY + 36 clk (+-2; measured BIT 4-30, asserted at BIT 4/8/20, 4 phases);
@@ -16,9 +16,12 @@
 .equ BIT,    8                  ; SPI bit time, clk
 .equ SMP,    BIT - 2            ; MOSI launch to SCK rise, clk (>= 3)
 .equ CSDLY,  16
-.equ N,      32                 ; ring slots (the ring below is written out for 32)
+.include "cleo_mem.inc"
+.equ N,      BR_RING_N          ; ring slots (the ring below is written out for 32)
+.assert N == 32, "ring is written out for 32 slots"
 .equ FREE,   0x8000             ; slot free = bit 15 set; a stored byte has bit 15 = 0
-.equ RING,   512 - N
+.equ RING,   BR_RING
+.assert RING + N == 512, "ring must end at 511: the pointer wraps on overflow"
 .equ PTR0,   0x10000 - N        ; pointer value of slot 0; bits [8:0] = RING
 
 .engine 1
@@ -112,6 +115,7 @@ take:   st    R0, [R1]                  ; free the slot: bit 15 of PTR0 is 1
         @tick : p1 <- 1
         jmp   xfer
 cend:
+.reserve RING, N
 .org RING
 ring:   .word FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE
         .word FREE, FREE, FREE, FREE, FREE, FREE, FREE, FREE

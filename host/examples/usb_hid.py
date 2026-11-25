@@ -19,7 +19,7 @@ CLK = 48_000_000
 MEMWORDS = 512                          # build on the board: 512 (SRAM, shipped) or 128 (flop fallback)
 IMAGE = "usb_ls.bin" if MEMWORDS == 128 else "usb_ls512.bin"
 PIDCHK = MEMWORDS > 128                 # 128-word build: the RP2350 STALLs a SETUP whose DATA PID was corrupted
-BUF = 118 if MEMWORDS == 128 else 246   # usb_ls.s BUF: IN buffer (7 words), KEY0, BUFKEY, KEY1
+BUF = 118 if MEMWORDS == 128 else 465   # cleo_mem.inc USB_BUF_FLOP / USB_BUF: IN buffer (7 words), KEY0, BUFKEY, KEY1
 KEYS = BUF + 7
 TEXT = "Hello from Cleo 123\n"
 EV_OK, EV_CRC, EV_INACK = 1, 2, 3

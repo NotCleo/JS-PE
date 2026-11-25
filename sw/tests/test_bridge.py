@@ -1,13 +1,24 @@
 # On-chip bridges on the ISS (docs/spec/programs/bridge_design.md): UART sender model in, SPI controller checker out.
 import bisect
+import os
+import re
 import random
 import pytest
-from harness import prog, simulate, changes
+from harness import PROG, prog, simulate, changes
 from jspe_iss import Chip
 from models import UartSender, spi_ctrl_check, uart_decode, I2cControllerModel, i2c_timing, i2c_violations
 import test_i2c
 
 N, RING, CODE = 32, 480, 47
+
+
+def memmap():
+    return {m[0]: int(m[1]) for m in re.findall(r"^\.equ\s+(\w+),\s*(\d+)", open(os.path.join(PROG, "cleo_mem.inc")).read(), re.M)}
+
+
+def test_ring_matches_memmap():
+    m = memmap()
+    assert (m["BR_RING"], m["BR_RING_N"]) == (RING, N)
 UMAX = 14                       # fastest UART bit time with every byte exact in all 4 phases, senders +-2 % (measured)
 
 
@@ -158,7 +169,7 @@ def test_us_framing_error():
 
 
 # ---- I2C target writes -> mailbox -> UART TX (bridge_i2c_uart.s)
-IU_CODE, MBOX = 30, 511
+IU_CODE = 30
 
 
 def iu_run(script, ubit, phase=0, thigh=60, tlow=65, ncyc=400000):
@@ -193,7 +204,8 @@ def scl_low_max(hist):
 
 def test_iu_size_and_park():
     img = prog("bridge_i2c_uart")
-    assert len([a for a in img.words if a < MBOX]) == IU_CODE and MBOX in img.words
+    mbox = img.label("mbox")
+    assert mbox == memmap()["BR_MBOX"] and len([a for a in img.words if a != mbox]) == IU_CODE
     c = Chip()
     c.load_image(img)
     c.start([0, 1, 2, 3])
