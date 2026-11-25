@@ -3,7 +3,10 @@
 FAULT_W = 475           # cleo_mem.inc FAULT_W (checked by sw/tests/test_ei1.py)
 ARMED = 0x8000
 
-# program -> {type: (name, pos max, arg min, arg max)}
+# program -> {type: (name, pos max, arg min, arg max)}. Undefined TYPEs alias to defined faults in the programs, so
+# only these may be armed. uart_tx break: a receiver sees a break (0x00 + framing) only for ARG >= 1 + DBITS +
+# PARITY + 1 (10 for 8N1); shorter is a corrupted character. spi_tgt clears the word when the frame starts: it fires
+# only if that frame reaches response byte POS (fired() = True also when it did not).
 SPEC = {
     "uart_tx": {1: ("parity", 0, 0, 0), 2: ("stop0", 0, 0, 0), 3: ("break", 0, 2, 255)},
     "i2c_tgt": {1: ("nack", 15, 1, 255), 2: ("stretch", 15, 1, 255), 3: ("ignore", 15, 0, 0), 4: ("stuck", 15, 1, 255)},
@@ -19,15 +22,18 @@ def word(prog, typ, pos=0, arg=0):
     return ARMED | typ << 12 | pos << 8 | arg
 
 
-def check(w):
-    # only 0 (disarm) or an armed word may be written: an unarmed non-zero word has no defined meaning
-    if w != 0 and not w & ARMED:
-        raise ValueError("unarmed non-zero fault word 0x%04x" % w)
+def check(w, prog=None):
+    # only 0 (disarm) or an armed word with a defined TYPE may be written
+    if w == 0:
+        return w
+    typ = w >> 12 & 7
+    if not w & ARMED or typ == 0 or (prog is not None and typ not in SPEC[prog]):
+        raise ValueError("fault word 0x%04x: unarmed or undefined TYPE" % w)
     return w
 
 
 def arm(link, eng, prog, typ, pos=0, arg=0):
-    link.wrmem(FAULT_W + eng, [check(word(prog, typ, pos, arg))])
+    link.wrmem(FAULT_W + eng, [check(word(prog, typ, pos, arg), prog)])
 
 
 def disarm(link, eng):

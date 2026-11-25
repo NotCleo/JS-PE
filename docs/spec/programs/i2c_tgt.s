@@ -1,5 +1,5 @@
 ; i2c_tgt.s - I2C target: 7-bit address, receive with ACK, transmit until NACK, clock stretching
-; words: 32 (FAULTS = 1: 99 + fault word) | clk/bit: external (125 at 400 kHz); SCL hold 3-4 clk + pad after SCL falls, own SDA edges THD + 3..4 clk after it | max: 400 kHz (phases >= 30 clk against the 14-clk bound); 1 MHz needs THD 5 and is marginal (13-clk high phase) | engines: 1
+; words: 32 (FAULTS = 1: 111 + fault word) | clk/bit: external (125 at 400 kHz); SCL hold 3-4 clk + pad after SCL falls, own SDA edges THD + 3..4 clk after it | max: 400 kHz (phases >= 30 clk against the 14-clk bound); 1 MHz needs THD 5 and is marginal (13-clk high phase) | engines: 1
 ; pins: p0 = SCL (uio[6], open-drain), p1 = SDA (uio[5], open-drain, shift input)
 ; host: every addressed transfer starts with the address byte {addr, R/W}. Write: each received byte
 ;       follows; SCL is stretched while the host FIFO is full. Read: the host supplies each byte to
@@ -19,10 +19,11 @@
 ; bound: every guard armed <= 14 clk after the previous SCL edge
 ; FAULTS = 1 (fault_design.md): at every ACK slot the target gives (SCL held, so the check only stretches) the
 ;          fault word FAULT_W + ENG is read; POS = ACK slots to let pass first (counted down in the word), then
-;          TYPE 1 NACK ARG slots in a row (ARG counted down), 2 SCL held ARG x 16 clk longer, then ACK, 3 not
+;          TYPE 1 NACK ARG slots in a row (ARG counted down; a NACKed address returns to idle: no read, nothing
+;          pushed), 2 SCL held ARG x 16 clk longer, then ACK, 3 not
 ;          addressed (no ACK, back to idle), 4 SDA held low ARG x 16 clk from the ACK (watchers off, SCL released,
 ;          then idle). Cleared when done (fires once). Trade-off: the check stretches every ACK slot even when
-;          unarmed (~40 clk after the SCL fall; on the bus +10-13 clk at 400 kHz, 0 at 100 kHz; +62-65 clk while
+;          unarmed (~40 clk after the SCL fall; on the bus +10-17 clk at 400 kHz, 0 at 100 kHz; +62-69 clk while
 ;          POS counts down); UM10204 Fm/Sm timing stays clean (sw/tests/test_faults.py, i2c_violations).
 
 .equ ADDR, 0x42
@@ -75,7 +76,8 @@ start:  p1 <- 1, p0 <- 1                ; a repeated START may arrive while we h
         jnz   idle                      ; not ours
         @fall p0 : p0 <- 0              ; eighth clock over: hold SCL
 .if FAULTS
-        call  fchk                      ; CY = 0: the slot was handled
+        call  fchk                      ; CY = 0: the slot was handled; Z = 1: NACKed
+        jz    idle                      ; a NACKed address: not addressed (no read, nothing pushed)
         jnc   aack
 .endif
         @tick : p1 <- 0                 ; THD later: ACK
@@ -140,13 +142,19 @@ fclr:   li    R2, #0                    ; fault complete
 fput:   li    R1, #FW
         st    R2, [R1]
         li    R2, #TSU - 1
-        cmp   R2, #255                  ; CY = 0: slot handled
+        li    R1, #0
+        add   R1, #0                    ; CY = 0: slot handled, Z = 1: NACKed
         ret
 f23:    shl   R2, R2                    ; CY = TYPE[0]; R2 = ARG << 4 (POS = 0)
         jc    fign
         tset  R2                        ; TYPE 2: SCL held ARG x 16 clk longer
         @tick : p1 <- 0                 ; then ACK
-        jmp   fclr
+        li    R2, #0
+        li    R1, #FW
+        st    R2, [R1]                  ; fault complete
+        li    R2, #TSU - 1
+        cmp   R2, #255                  ; CY = 0: slot handled, Z = 0
+        ret
 fstk:   shl   R2, R2
         shl   R2, R2                    ; TYPE 4: R2 = ARG << 4
         @tick : p1 <- 0                 ; SDA low, THD after the fall
@@ -156,6 +164,9 @@ fstk:   shl   R2, R2
         tset  R2
         p0 <- 1                         ; SCL released: the controller runs into the low SDA
         @tick : p1 <- 1                 ; SDA released
+        li    R2, #0
+        li    R1, #FW
+        st    R2, [R1]                  ; cleared before the watchers can abort
         li    R1, #0x4800
         wcfg  TCFG, R1
         watch #3

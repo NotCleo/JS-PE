@@ -1,5 +1,5 @@
 ; spi_tgt.s - SPI target, register device: byte 1 = register number, then table[reg], table[reg+1], ...
-; words: 12 + table (FAULTS = 1: 68 + table + fault word) | clk/bit: external | max SCK: 4 MHz (default slots; 2 MHz is the MUST), about 6 MHz solo | engines: 1
+; words: 12 + table (FAULTS = 1: 69 + table + fault word) | clk/bit: external | max SCK: 4 MHz (default slots; 2 MHz is the MUST), about 6 MHz solo | engines: 1
 ; pins: p0 = SCK (uio[3]), p1 = CS (uio[0]), p2 = MISO (uio[2]), p3 = MOSI (uio[1], shift input)
 ; modes: 0 and 3 as written; 1 and 2 with the invert bit of p0 in BIND01 (the sampling edge is the
 ;        logical rising edge). MISO follows the shifter: it changes 4-5 clk + pad after each sampling
@@ -22,7 +22,7 @@
 ;        TYPE 2 / 3 that word is 8 - ARG / 8 + ARG bits (later bytes slip ARG bits), SHCFG restored at the next
 ;        boundary. Cleared when read (fires in that CS frame, if it reaches byte POS). Trade-off: first sampling edge
 ;        >= 160 clk (3.2 us) after CS falls (static setup bound 141 + HOLD) and SCK <= 1 MHz (the fault lands ~30 clk
-;        after the 8th edge; tested down to 1.67 MHz); 76 + fault word words; >= 4096 response bytes in one frame repeat it
+;        after the 8th edge; tested down to 1.67 MHz); 77 + fault word words; >= 4096 response bytes in one frame repeat it
 
 .equ MODE12, 0                  ; 1 for SPI modes 1 and 2
 .equ FAULTS, 0                  ; 1 = fault-injection variant
@@ -55,11 +55,13 @@
 .code
 .org ORG
 idle:   p2 <- z                         ; MISO released
-        wrst                            ; drop a partial byte
 .if FAULTS
+        li    R2, #SHC
+        wcfg  SHCFG, R2                 ; 8 bits (a short/long word cut by CS) and wrst
         li    R1, #table                ; table pointer (R0, R2 are fault scratch during a transfer)
         li    R2, #HOLD
 .else
+        wrst                            ; drop a partial byte
         mov   R1, R0                    ; table pointer
 .endif
         li    S, #0                     ; the byte shifted out during the command is 0x00

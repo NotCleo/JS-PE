@@ -292,7 +292,7 @@ Numbers: decimal, `0x`, `0b`, `'c'`. Expressions: `+ - * / % << >> & | ^ ~ ( )`,
 | `.word expr {, expr}` | literal words |
 | `.space n` | n zero words |
 | `.reserve addr, n` | words addr…addr+n−1 belong to this file: a store or `.reserve` of another file there is an error (data regions, MEMMAP.md); this file may store into them |
-| `.include "file"` | inserts the file's lines (path relative to the including file, else to docs/spec/programs; nesting ≤ 8); symbols stay per file |
+| `.include "file"` | inserts the file's lines (path relative to the including file, else to docs/spec/programs; nesting ≤ 8; expanded textually, so a surrounding `.if` applies to its lines; a missing file is an error even there); symbols stay per file |
 | `.engine expr` | following `.init`, `.entry`, `.pad` and code belong to engine n (0–3) |
 | `.init` … `.code` | instructions between them are not stored: they are emitted as injected (EXEC) instructions for the current engine, in order. Allowed: anything except relative jumps, `call`, `loop` |
 | `.entry label` | injected `jmp` (absolute) to `label`, emitted after the engine's `.init` list |

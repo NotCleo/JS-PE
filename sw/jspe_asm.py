@@ -229,7 +229,8 @@ def split_args(s):
 class Image:
     def __init__(self):
         self.words, self.src, self.owner = {}, {}, {}
-        self.reserved = {}       # address -> (file, line) of a .reserve: no other file may use it
+        self.reserved = {}       # address -> (program, file, line) of a .reserve: no other program may use it
+        self.file = {}           # address -> program file that stored it
         self.engines = {}
         self.slotmap = None
         self.filt = 0
@@ -400,7 +401,7 @@ class Assembler:
             conds = []
             loop = None
             for opath, ln, raw in fc.src:
-                self.ln = ln
+                self.ln, self.opath = ln, opath
                 line = strip_comment(raw)
                 try:
                     if loop is not None:
@@ -545,10 +546,13 @@ class Assembler:
             if n < 1 or not 0 <= base or base + n > min(512, self.mem):
                 raise AsmError(".reserve out of range")
             for x in range(base, base + n):
-                for tab in (img.reserved, img.src):
-                    if x in tab and tab[x][0] != self.fc.path:
-                        raise AsmError("reserved word %d already used by %s:%d" % (x, os.path.basename(tab[x][0]), tab[x][1]))
-                img.reserved[x] = (self.fc.path, self.ln)
+                if x in img.reserved and img.reserved[x][0] != self.fc.path:
+                    _, f, ln = img.reserved[x]
+                    raise AsmError("reserved word %d already used by %s:%d" % (x, os.path.basename(f), ln))
+                if x in img.file and img.file[x] != self.fc.path:
+                    f, ln, _ = img.src[x]
+                    raise AsmError("reserved word %d already used by %s:%d" % (x, os.path.basename(f), ln))
+                img.reserved[x] = (self.fc.path, self.opath, self.ln)
         elif d == ".word":
             for x in a:
                 self.store(self.ev(x) & 0xFFFF, raw)
@@ -650,10 +654,11 @@ class Assembler:
             f, ln, _ = img.src[a]
             raise AsmError("address %d already used by %s:%d" % (a, os.path.basename(f), ln))
         if a in img.reserved and img.reserved[a][0] != self.fc.path:
-            f, ln = img.reserved[a]
+            _, f, ln = img.reserved[a]
             raise AsmError("address %d reserved by %s:%d" % (a, os.path.basename(f), ln))
         img.words[a] = w
-        img.src[a] = (self.fc.path, self.ln, raw)
+        img.src[a] = (self.opath, self.ln, raw)      # where the line is (an included file: that file)
+        img.file[a] = self.fc.path                    # which program owns the word
         img.owner[a] = self.engine
         self.lc += 1
 

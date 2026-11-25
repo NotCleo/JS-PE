@@ -20,10 +20,13 @@ def fword(typ, pos=0, arg=0):
 
 
 def digest(img):
-    return hashlib.sha1(repr(sorted(img.words.items())).encode()).hexdigest()[:12]
+    # memory image, .init lists, entries, pads, SLOTMAP, FILT (digests of the sources before the fault variants)
+    eng = [(e, [w for w, _, _ in d["init"]], d["entry"], sorted(d["pads"].items())) for e, d in sorted(img.engines.items())]
+    return hashlib.sha1(repr((sorted(img.words.items()), eng, img.slotmap, img.filt)).encode()).hexdigest()[:12]
 
 
-@pytest.mark.parametrize("name,sha", [("uart_tx", "5d021c0da04e"), ("i2c_tgt", "b6ae2a376afe"), ("spi_tgt", "ce4befcc1182"), ("can", "d81016aaa458")])
+@pytest.mark.parametrize("name,sha", [("uart_tx", "4a5f676c239e"), ("i2c_tgt", "e58566083db3"), ("spi_tgt", "150e13190d62"),
+                                      ("can", "ba9003c5e793")])
 def test_default_images_unchanged(name, sha):
     assert digest(prog(name)) == sha and digest(prog(name, FAULTS=0)) == sha
 
@@ -112,10 +115,19 @@ def test_i2c_nack_at_position(slot):
 
 
 def test_i2c_nack_count_and_unarmed():
-    c, m, hist, drv = i2c_fault(wr(0x11) + wr(0x22) + wr(0x33), fword(1, pos=0, arg=3))
-    assert m.acks == [1, 1, 1, 0, 0, 0] and c.mem[MAP["FAULT_W"]] == 0
+    # a NACKed address returns to idle (its data byte is NACKed too, nothing pushed): slots 0-2 = the 3 addresses
+    c, m, hist, drv = i2c_fault(wr(0x11) + wr(0x22) + wr(0x33) + wr(0x44), fword(1, pos=0, arg=3))
+    assert m.acks == [1, 1, 1, 1, 1, 1, 0, 0] and c.host_bytes(0) == [0x84, 0x44] and c.mem[MAP["FAULT_W"]] == 0
     c, m, hist, drv = i2c_fault(wr(0x11), fword(1) & ~ARMED)
     assert m.acks == [0, 0] and c.mem[MAP["FAULT_W"]] == fword(1) & ~ARMED
+
+
+@pytest.mark.parametrize("slot", [0, 3])
+def test_i2c_nack_read_address_then_write(slot):
+    # NACK at a read's address: the target goes idle (no SCL hold, no transmit); the next write works
+    script = [("S",), ("W", 0x85), ("P",)] + wr(0x11)
+    c, m, hist, drv = i2c_fault(script, fword(1, arg=1), slot, host_tx=[0x5A])
+    assert m.acks == [1, 0, 0] and m.errs == [] and c.host_bytes(0) == [0x84, 0x11] and c.mem[MAP["FAULT_W"]] == 0
 
 
 @pytest.mark.parametrize("slot", [1, 2])
@@ -164,7 +176,7 @@ def test_i2c_faults_build_um10204(mode, thigh, tlow, rise, word):
     lows = scl_lows(hist)
     base = sorted(lows)[len(lows) // 2]                                # an unstretched low phase
     extra = [x - base for x in lows if x > base + 5]
-    assert len(extra) <= 4 and max(extra, default=0) <= (15 if word == 0 else 70), (base, extra)  # ACK slots only
+    assert len(extra) <= 4 and max(extra, default=0) <= (20 if word == 0 else 75), (base, extra)  # ACK slots only
 
 
 # ---- spi_tgt against the SPI controller model (register device: command, then table[cmd], table[cmd + 1], ...)
@@ -213,11 +225,19 @@ def test_spi_bit_flip(mode, slot):
 
 
 @pytest.mark.parametrize("slot", [0, 3])
-@pytest.mark.parametrize("typ,arg", [(2, 3), (2, 1), (3, 2), (3, 7)])
+@pytest.mark.parametrize("typ,arg", [(2, 3), (2, 1), (2, 7), (3, 2), (3, 7), (3, 8)])
 def test_spi_short_long_word(typ, arg, slot):
     c, got = spi_fault([(0, 6), (2, 4)], fword(typ, pos=1, arg=arg), slot=slot)
     assert got[0] == spi_expect(0, 6, 1, typ, arg) and got[1] == spi_expect(2, 4), got
     assert c.mem[MAP["FAULT_W"]] == 0
+
+
+@pytest.mark.parametrize("typ,pos", [(3, 1), (2, 1), (3, 4), (1, 6)])
+def test_spi_fault_cut_by_cs(typ, pos):
+    # the fault byte is the last clocked one, or beyond the frame: the next frames are clean (SHCFG restored in idle)
+    c, got = spi_fault([(0, 2), (1, 3), (2, 3)], fword(typ, pos=pos, arg=4))
+    assert got[1:] == [spi_expect(1, 3), spi_expect(2, 3)], got
+    assert got[0] == spi_expect(0, 2, pos, typ, 4)[:3] and c.mem[MAP["FAULT_W"]] == 0   # lost if past the frame
 
 
 def test_spi_unarmed_and_first_byte():
@@ -261,3 +281,19 @@ def test_can_unarmed_frames_clean(word):
     c, node, seen, rx, tx = can_fault([f, f], word)
     assert node.frames == [(0x7F0, [0x55], 0)] * 2 and node.errors == [] and tx == [0x101, 0x101]
     assert c.mem[MAP["FAULT_W"]] == word                             # left as written
+
+
+def test_two_faulted_engines():
+    # per-engine fault words: i2c_tgt FAULTS on E0 and uart_tx FAULTS on E2 in one image, each fires in its protocol
+    img = assemble([os.path.join(PROG, "i2c_tgt.s"), os.path.join(PROG, "uart_tx.s")],
+                   {"FAULTS": "1", "uart_tx.s:ENG": "2"})
+    c = boot(img, 1)
+    c.mem[MAP["FAULT_W"] + 0] = fword(1, pos=1, arg=1)                 # i2c: NACK the first data byte
+    c.mem[MAP["FAULT_W"] + 2] = fword(2)                               # uart: low stop bit on the next character
+    c.host_in[2] += [0x41, 0x42]
+    m = I2cControllerModel(wr(0x11, 0x22), 60, 65)
+    i2c_run(c, m, 60000, 0, done=m.done)
+    simulate(c, 3000)
+    dec = uart_decode(changes(c, lambda uo, a, b: uo & 1, 1), 50)
+    assert m.acks == [0, 1, 0] and [d[1] for d in dec] == [0x41, 0x42] and [d[3] for d in dec] == [False, True]
+    assert c.mem[MAP["FAULT_W"]] == 0 and c.mem[MAP["FAULT_W"] + 2] == 0

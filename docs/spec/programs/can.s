@@ -26,7 +26,8 @@
 ;      equal on all transmitters up to the first differing bit).
 ;   8. FAULTS = 1 (fault_design.md, 512-word build): E_TX turns an armed fault word FAULT_W + 0 into a pending
 ;      0x8000 | ARG when it pulls NB, and XORs ARG << 1 into LFSR_HI after the last data bit's tick (before E_RX's
-;      step at its tock), so the CRC sent has bits 7..0 ^= ARG; FW cleared. Unarmed words are ignored. Every other
+;      step at its tock), so the CRC sent differs from the good one (by one LFSR step of ARG << 1, e.g. bits 8..1
+;      when no stuff bit follows the last data bit); FW cleared. Unarmed words are ignored. Every other
 ;      receiver: CRC error, no ACK, error flag, frame not delivered; E_TX reports 4 (ACK error), the host retries.
 ;      The own E_RX reports the faulted frame OK: RX and TX share the LFSR state (D211), so detection is by the
 ;      partner node only.
@@ -256,7 +257,7 @@ arbend: call  tbits                     ; R1 = 0: IDE r0 DLC data, up to the las
         jnc   tfw2                      ; unarmed (any value): no fault
         rcfg  R1, LFSR_HI
         xor   R1, R0
-        wcfg  LFSR_HI, R1               ; CRC bits 7..0 ^= ARG: every other receiver sees a CRC error
+        wcfg  LFSR_HI, R1               ; CRC state ^= ARG << 1: every other receiver sees a CRC error
         li    R0, #0
         st    R0, [R2]                  ; consumed
 tfw2:   li    R0, #0

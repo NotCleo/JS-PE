@@ -50,7 +50,8 @@ def test_ei1_i2c(seed):
     n = 12
     camp = dict(fault.campaign(seed, "i2c_tgt", n, 5, pos_max=1, arg_range={1: (1, 1), 2: (40, 120), 4: (30, 60)}))
     c = boot(prog("i2c_tgt", FAULTS=1), seed % 4)
-    base = None
+    m = I2cControllerModel(wr(0xA5, 0xC3), 60, 65)
+    base = max(scl_lows(i2c_run(c, m, 60000, 0, done=m.done)[1]))       # a clean transfer first
     for k in range(n):
         if k in camp:
             c.mem[MAP["FAULT_W"]] = camp[k]
@@ -62,10 +63,10 @@ def test_ei1_i2c(seed):
         want = list(acks[typ])
         if typ == 1:
             want[pos] = 1
+            if pos == 0:
+                want = [1, 1, 1]                                            # NACKed address: idle
         assert m.acks == want, (seed, k, hex(camp.get(k, 0)), m.acks)
         assert (m.errs != []) == (typ == 4) and all(e[0] == pos + 1 for e in m.errs), (k, m.errs)
-        if typ == 0 and base is None:
-            base = max(lows)
         if typ == 2:
             assert max(lows) >= base + 16 * arg, (k, max(lows), base)
         assert c.mem[MAP["FAULT_W"]] == 0
