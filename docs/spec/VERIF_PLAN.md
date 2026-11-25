@@ -196,7 +196,7 @@ Timing criteria (D040). BIT = nominal bit time in clk (50 MHz / baud, not rounde
 | C1 | four engines (PINS.md 3.7): I2C target, UART TX, UART RX, SPI target, all partners active for 200 000 clk | each checker passes; each engine's pad trace equals its solo run | I, R, G (20 000 clk) |
 | C2 | E3 reloaded (SPI target → WS2812) while E1/E2 stream UART at 1 Mbaud | no error on the running engines | I, R |
 | MON1 | SHOULD: all pads `en` = 0; passive decode of UART (two lines), SPI and I2C traffic between two models (programs written in Phase 7) | decoded data correct; `uio_oe` = 0 and no protocol `uo` pad changes during the whole test | I, R |
-| EI1 | SHOULD: error injection variants (UART wrong parity, low stop bit, break; I2C forced NACK and extra stretch; SPI short word, CS glitch) | the partner model reports exactly the injected error | I, R |
+| EI1 | SHOULD: error injection variants, `-D FAULTS=1` + fault word (programs/fault_design.md, D208): UART parity, low stop bit, break; I2C NACK, extra stretch, ignored address, stuck SDA; SPI target bit flip, short/long word; CAN CRC; seeded host campaign | every injected fault reported exactly once by the matching receiver, at its position; default images unchanged | I, R |
 | RND1 | random legal programs on four engines with random pad and host traffic, ≥ 200 seeds x 20 000 clk; a second set containing undefined words | lockstep clean; trap exactly where the ISS traps | R |
 
 ## 9. Gate level and STA
