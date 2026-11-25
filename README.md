@@ -108,6 +108,10 @@ All rates are from simulation.
 
 \* Not designed in: run on the frozen RTL with no RTL change. WS2812 and Manchester were sketched while the ISA was being written, so they may have shaped it; CAN was written entirely afterwards. The one RTL change since the freeze is a reset bug fix found by formal verification.
 
+Unique capabilities:
+
+- Fault injection: `-D FAULTS=1` builds of the UART TX, I2C target, SPI target and CAN programs inject one armed fault each (wrong parity, low stop bit, break; NACK, extra stretch, ignored address, stuck SDA; flipped bits, short/long SPI words; a bad CAN CRC) at a chosen position, armed by one memory write from the host; seeded random campaigns are reproducible, and every fault is shown to reach the partner's receiver (test EI1). The fault builds trade speed: UART TX ≤ 1.08 Mbaud, SPI target ≤ 1 MHz.
+
 Programs: [docs/spec/programs/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec/programs). Details per protocol: [capability](https://github.com/NotCleo/JS-PE/blob/main/docs/CAPABILITY.md), [programs](https://github.com/NotCleo/JS-PE/blob/main/docs/PROGRAMS.md).
 
 ----
