@@ -6,8 +6,9 @@
 ; ring: N slots at 512-N..511, initialised free (bit 15 = 1); a byte (bit 15 = 0) marks its slot full;
 ;       overrun when slot[WP] is still full at the start bit
 ; host: E1 event 1 = framing error (byte still forwarded), event 2 = overrun (byte dropped); nothing else
-; sustained iff the SPI byte period < 10*UBIT (measured 156 clk at BIT 8, 356 at BIT 30; BIT 6 keeps up with UBIT 14);
-;       else the ring absorbs bursts, then overruns
+; rate: SPI byte period P = 9*BIT + 3*CSDLY + 36 clk (+-2, measured BIT 4-30, all phases); sustained iff P <= 10*UBIT:
+;       at UBIT 14 (3.57 Mbaud, CSDLY 16) SPI BIT <= 6. Slower SPI: back-to-back characters, first drop at byte
+;       ~ 32*P/(P - 10*UBIT): at UBIT 14 byte 306-307 (BIT 8), 117 (BIT 12), 68 (BIT 20); the ring is loaded free by the image
 
 .equ UBIT,   50                 ; UART bit time, clk
 .equ RXPIN,  7

@@ -2,7 +2,7 @@
 import bisect
 import random
 import pytest
-from harness import prog, boot, simulate, changes
+from harness import prog, simulate, changes
 from jspe_iss import Chip
 from models import UartSender, spi_ctrl_check
 
@@ -10,8 +10,20 @@ N, RING, CODE = 32, 480, 47
 UMAX = 14                       # fastest UART bit time with every byte exact in all 4 phases (measured)
 
 
+def rboot(img, phase=0, seed=0):
+    # memory random before the image is loaded (ring region included): nothing may rely on zeroed memory
+    c = Chip()
+    r = random.Random(seed)
+    for a in range(len(c.mem)):
+        c.mem[a] = r.getrandbits(16)
+    for e in c.eng:
+        e.trace = True
+    c.boot(img, phase=phase)
+    return c
+
+
 def us_run(data, ubit, sbit, phase=0, gap=0.0, bad_stop=()):
-    c = boot(prog("bridge_uart_spi", UBIT=ubit, BIT=sbit), phase)
+    c = rboot(prog("bridge_uart_spi", UBIT=ubit, BIT=sbit), phase, seed=ubit * 31 + sbit + phase)
     t0 = c.cycle
     s = UartSender(ubit, data, t0=t0 + 30, gap=gap, bad_stop=bad_stop)
     line = lambda t, ch: (s.level(t) << 7 | 8, 0)
@@ -50,6 +62,7 @@ def test_us_size_and_park():
     img = prog("bridge_uart_spi")
     code = [a for a in img.words if a < RING]
     assert len(code) == CODE and sorted(a for a in img.words if a >= RING) == list(range(RING, 512))
+    assert all(img.words[a] == 0x8000 for a in range(RING, 512))          # ring loaded "all free" by the image
     c = Chip()                                      # RUN with no EXEC after reset: every engine halts at word 0
     c.load_image(img)
     c.start([0, 1, 2, 3])
@@ -84,6 +97,29 @@ def ring_check(data, s, got, ev, lo, ubit):
         est = sum(1 for j in range(k) if j not in d) - bisect.bisect_left(lo, tk)
         assert (N <= est <= N + 1) if k in d else est <= N, (k, est)
     return d
+
+
+@pytest.mark.parametrize("sbit,csdly", [(4, 16), (8, 16), (20, 16), (8, 30)])
+def test_us_spi_byte_period(sbit, csdly):
+    # ring preloaded with 32 bytes: SPI byte period = 9*BIT + 3*CSDLY + 36 (+-2 clk) in all phases
+    for ph in range(4):
+        c = rboot(prog("bridge_uart_spi", BIT=sbit, CSDLY=csdly), ph, seed=ph)
+        for k in range(N):
+            c.mem[RING + k] = k
+        simulate(c, 34 * (10 * sbit + 3 * csdly + 60), lambda t, ch: (0x88, 0))
+        lo = [t for t, v in changes(c, lambda uo, o, oe: o & 1) if v == 0]
+        assert len(lo) == N
+        assert all(abs(b - a - (9 * sbit + 3 * csdly + 36)) <= 2 for a, b in zip(lo[1:], lo[2:]))
+
+
+@pytest.mark.parametrize("sbit,first,phases", [(20, 68, range(4)), (12, 117, [0])])
+def test_us_burst_before_first_drop(sbit, first, phases):
+    # back-to-back characters at UBIT 14: the first dropped byte is number `first` (~ 32 * P / (P - 140))
+    for ph in phases:
+        data = rand_bytes(first + 12, sbit + ph)
+        c, s, got, ev, lo = us_run(data, UMAX, sbit, ph)
+        d = ring_check(data, s, got, ev, lo, UMAX)
+        assert d[0] == first, (ph, d[:3])
 
 
 def test_us_burst_absorbed():
