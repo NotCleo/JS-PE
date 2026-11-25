@@ -152,4 +152,23 @@ Scores 1–3: **R** = reprogrammability (a protocol or use not designed in, run 
 | 17 | Minimal timer-clocked shift + Manchester/biphase TX | 1 | 1 | 1 | 6–8 | **yes** | 3.5: ≤ 3.4k placed; no shipped row needs it; 10BASE-T still out (D125) |
 | — | Dropped: fused decrement-and-branch (3.2), hardware DMA (3.1), multi-lane shift, SCK-domain CDC, SJW resync, hardware CDR | | | | | | §1 rows 2, 3, 7, 9; 3.2 |
 
-Ranks 1–8 add up to 13.5 days, ranks 1–14 to 24 days.
+Ranks 1–8 add up to 13.5 days, ranks 1–14 to 22.5 days.
+
+## 5. Recommendation
+
+**(i) Program and host only.** Keep rtl-freeze-v1 + D109 as the shipped src/; plan nothing that needs an RTL change.
+
+Why:
+- Every measured gap closes in software: capture exists (3.3), a software DMA outruns the host link (3.1), bridges run on chip (3.4), the profile shows no shipped row limited by a fusable pair (3.2).
+- Area is no longer the reason to wait (24k placed for all four candidates, 3.5), but each src/ change still costs the full D127 chain (formal on the touched blocks, lockstep, T6 bound sweep, GDS, GLS 45/45) plus new timing paths next to the D081 cut. That is about a week per feature, taken from ranks 1–9, which score higher on the primary axis (protocols and uses not designed in).
+- The board bring-up (host firmware, cold start, GPIO plan) has not started and may surface board-side issues that need those days.
+
+**(ii) as a pre-written option only: + the second LFSR**, the one RTL item with a protocol-level gain (CAN above 625 kbit/s, CAN + USB together, two CAN nodes). It is a self-contained block off the fire path. Leave out the oversampling register and minimal A + B: no shipped or planned row needs them.
+
+| Date | Gate |
+|---|---|
+| 2026-11-26 … 12-08 | ranks 1–4 and 6 (bridges, fault injection + EI1, monitors + MON1, measurement, link pulses); PIO link (rank 7) as far as possible without the board |
+| **2026-12-10 go/no-go** for (ii) | **go** only if all of: ranks 1–4 and 6 merged and green (`make swtest`, `make test`); no open board-side issue; a ≤ 1-page design note (isa.yaml encoding, per-engine select, formal plan) approved; a fresh area/timing estimate. Otherwise **no-go**, and the default is no-go |
+| 2026-12-10 … 12-20 | no-go: ranks 5, 8, 9, then 10–14. go: second LFSR on a branch through the D127 chain, ranks 5 and 8 in parallel |
+| **2026-12-20** | last src/ change (D124); after it only docs, host, programs |
+| 2027-01-05 / 01-10 / 01-15 | final GDS + GLS, docs, submit (ROADMAP_V2 §6) |
