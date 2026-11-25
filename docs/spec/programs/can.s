@@ -1,5 +1,5 @@
 ; can.s - CAN 2.0A node (11-bit ID, data + remote frames). Not designed in (D102, can_design.md).
-; words: RX 66, TX 62 (128 total; FAULTS = 1: 147 + fault word); CAN uses 128/128 words: runs alone on the flop build (-D ORG_TX=0 -D ORG_RX=62) | clk/bit: BIT = 100 (500 kbit/s), sample point SPC = 75 clk | engines: 2 (E_RX, E_TX)
+; words: RX 66, TX 62 (128 total; FAULTS = 1: 150 + fault word); CAN uses 128/128 words: runs alone on the flop build (-D ORG_TX=0 -D ORG_RX=62) | clk/bit: BIT = 100 (500 kbit/s), sample point SPC = 75 clk | engines: 2 (E_RX, E_TX)
 ; pins: bus = uio[4], open-drain, external pull-up (PINS 5); E_TX owns the pad, E_RX reads it.
 ; LIMITS (stated, not hidden):
 ;   1. resync = hard re-time on every recessive->dominant edge (TCFG hard sync), i.e. SJW unlimited; no
@@ -25,11 +25,12 @@
 ;   7. a stuff-bit mismatch inside SOF + ID + RTR is reported as arbitration lost (fault case only: stuff bits are
 ;      equal on all transmitters up to the first differing bit).
 ;   8. FAULTS = 1 (fault_design.md, 512-word build): E_TX turns an armed fault word FAULT_W + 0 into a pending
-;      mask ARG << 1 when it pulls NB, and XORs it into LFSR_HI after the last data bit's tick (before E_RX's step
-;      at its tock), so the CRC sent has bits 7..0 ^= ARG; FW cleared. Every other receiver: CRC error, no ACK,
-;      error flag, frame not delivered; E_TX reports 4 (ACK error) and the host retries; the own E_RX shares the
-;      LFSR and reports OK. A non-zero unarmed FW is taken as a pending mask (the host writes 0 or armed words).
-;      147 + FW words (ORG_RX + 24); rates unchanged (tested 625, 500, 125 kbit/s, 4 phases).
+;      0x8000 | ARG when it pulls NB, and XORs ARG << 1 into LFSR_HI after the last data bit's tick (before E_RX's
+;      step at its tock), so the CRC sent has bits 7..0 ^= ARG; FW cleared. Unarmed words are ignored. Every other
+;      receiver: CRC error, no ACK, error flag, frame not delivered; E_TX reports 4 (ACK error), the host retries.
+;      The own E_RX reports the faulted frame OK: RX and TX share the LFSR state (D211), so detection is by the
+;      partner node only.
+;      150 + FW words (ORG_RX + 24); rates unchanged (tested 625, 500, 125 kbit/s, 4 phases).
 ; RX (E_RX): receives every frame, its own included. Bit grid: periodic timer, hard sync on falling edges,
 ;   tock = sample point. Stuffing: RUN limit 5; a stuff bit is booked with `q` (ALT = stuff) on padless p3 and
 ;   checked with MIS (bus = previous bit -> stuff error). CRC-15: shared LFSR, left form, POLY 0x4599 << 17,
@@ -227,13 +228,13 @@ tret:   ret
 
 tidle:  @hrx  : pull R0                 ; NB
 .if FAULTS
-        li    R2, #FW                   ; armed fault word -> pending CRC mask ARG << 1 (ARMED clear)
+        li    R2, #FW                   ; armed fault word -> pending 0x8000 | ARG (TYPE, POS cleared)
         ld    R1, [R2]
         shl   T, R1                     ; CY = ARMED
         jnc   tfw
         li    S, #0xFF
         and   R1, S
-        shl   R1, R1
+        lih   R1, #0x80
         st    R1, [R2]
 tfw:
 .endif
@@ -250,12 +251,15 @@ tc1:    @c1   : jhi p1, tc1             ; bus idle, and G_DRV low: a flag raised
 arbend: call  tbits                     ; R1 = 0: IDE r0 DLC data, up to the last byte
 .if FAULTS
         li    R2, #FW                   ; R0 = R2 = 0 here; E_RX steps the last data bit at its tock, after this
-        ld    R0, [R2]                  ; pending mask (0: none)
+        ld    R0, [R2]
+        shl   R0, R0                    ; CY = ARMED; R0 = ARG << 1 when pending
+        jnc   tfw2                      ; unarmed (any value): no fault
         rcfg  R1, LFSR_HI
         xor   R1, R0
         wcfg  LFSR_HI, R1               ; CRC bits 7..0 ^= ARG: every other receiver sees a CRC error
         li    R0, #0
         st    R0, [R2]                  ; consumed
+tfw2:   li    R0, #0
         li    R2, #0
 .endif
         li    R1, #15

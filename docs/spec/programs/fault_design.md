@@ -1,6 +1,6 @@
 # Fault injection (BACKLOG rank 2, EI1)
 
-Variants `-D FAULTS=1`; the default (`FAULTS = 0`) image is byte-identical (tested).
+Variants `-D FAULTS=1`; default images byte-identical (tested).
 
 ## Fault word
 `FW = FAULT_W + ENG` = 475…478 (MEMMAP.md, `cleo_mem.inc`), 512-word build only. Images `.reserve FW, 1` with `.word 0`; any other program's use of it is an assembly error.
@@ -26,7 +26,7 @@ The host writes FW only between transactions; the program reads it once per tran
 | | 4 | SDA low ARG x 16 clk from the ACK, then idle | SDA stuck (bit errors) |
 | spi_tgt | 1 | response byte POS ^= ARG (mask; bit k = 1 << k) | bit mismatch |
 | | 2, 3 | byte POS is 8 ∓ ARG bits (SHCFG) | later bytes slip ARG bits |
-| can (TX) | 1 | next CRC bits 7..0 XOR ARG (via LFSR_HI before the CRC read) | CRC error, no ACK, not delivered; TX event 4, clean retry |
+| can (TX) | 1 | next CRC bits 7..0 XOR ARG (via LFSR_HI before the CRC read) | partner: CRC error, no ACK, not delivered; TX event 4, clean retry. Own RX: OK (shares the LFSR, D211) |
 
 No program change: hot-unplug = `PAD_*` `en` = 0 (formally proven).
 
@@ -38,4 +38,4 @@ Random campaigns: `host/fault.py`, `random.Random(seed)`: same seed, same campai
 | uart_tx | 8 | 29 + FW (8N1) | BIT ≥ 46 clk (≤ 1.08 Mbaud), per-path `.deadline` |
 | i2c_tgt | 32 | 99 + FW | each ACK slot stretched ≈ 40 clk (+ ≤ 60 while counting down) |
 | spi_tgt | 12 + 8 | 68 + 8 + FW | first edge ≥ 160 clk after CS falls, SCK ≤ 1 MHz |
-| can | 128 | 147 + FW | 512-word build, `ORG_RX` + 24; rates unchanged |
+| can | 128 | 150 + FW | 512-word build, `ORG_RX` + 24; rates unchanged |

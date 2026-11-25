@@ -255,7 +255,9 @@ def test_can_crc_fault_then_clean_retry(bit, arg, phase):
     assert c.eng[0].ovr == 0 and c.eng[1].ovr == 0
 
 
-def test_can_unarmed_frames_clean():
+@pytest.mark.parametrize("word", [0, 0x10A5, 0x00FF, 0x7FFF])            # 0 and non-zero unarmed words
+def test_can_unarmed_frames_clean(word):
     f = (0x7F0, [0x55])
-    c, node, seen, rx, tx = can_fault([f, f], 0)
+    c, node, seen, rx, tx = can_fault([f, f], word)
     assert node.frames == [(0x7F0, [0x55], 0)] * 2 and node.errors == [] and tx == [0x101, 0x101]
+    assert c.mem[MAP["FAULT_W"]] == word                             # left as written
