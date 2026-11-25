@@ -43,7 +43,7 @@ Triage of a private list of questions and ideas (planning notes, not in the repo
 
 ## 3. Experiments (free: ISS + yosys, no src/ change)
 
-All runs on the golden ISS at 50 MHz unless noted, 4 slot phases where stated; scratch scripts and prototype programs were not committed (they are throwaway; the numbers below are the record).
+All runs on the golden ISS at 50 MHz unless noted, 4 slot phases where stated. 3.1, 3.3 and 3.4 are reproduced by [sw/tests/test_backlog.py](../../sw/tests/test_backlog.py), which asserts the numbers below (`make swtest`; the three runs > 20 s are marked slow, `make swtest-all`). The 3.2 profile script was not kept.
 
 ### 3.1 Software DMA
 
@@ -54,6 +54,8 @@ Programs (one engine, 4 words each): `@hrx pull R1; @hrx pullh R1; st R1, [R0+1]
 | 0xE4 default, 1 slot of 4 | 2.50 words/µs (5.0 MB/s) | 2.50 words/µs | BIT ≥ 12 clk = 4.17 Mbit/s (data still correct at 11) |
 | `.slots 0, 1, 0, 2`: 2 slots for the DMA engine, E1/E2 one each, E3 stopped | 5.00 | 5.00 | BIT ≥ 6 = 8.33 Mbit/s (correct at 5) |
 | 0x00 solo | 5.56 | 5.00 | BIT ≥ 6 |
+
+Tests: `test_dma_fifo_rates` (±0.03 words/µs, 200-word buffer, data checked), `test_dma_mem_to_pin_min_bit` (exact at the minimum BIT, correct data with a late edge one clk below), `test_dma_no_effect_on_neighbour` (uart_tx pad trace with and without the DMA engine, 4 phases, both maps).
 
 - The fastest host link moves 1.25 MB/s = 0.625 words/µs (B = 4, HOSTIF 8): a software DMA engine is 4× faster than anything that can feed it from the host.
 - Effect on other engines' arming bounds: none. Grants depend only on the slot counter and the map (ARCH 2.2); measured: `uart_tx` on E1 or E3 next to a running FIFO → memory loop on E0 gives an identical pad trace in all four phases (and on E1/E2 under the 2-slot map). Giving the DMA engine two slots keeps G = 4, K = 4 (bound 4j + 2) for the engines with one slot, at the price of a fourth engine.
@@ -98,6 +100,8 @@ Program (7 words): free-running timer, P = 0xFFFF; `@rise p0 : mov R1, T`, `@fal
 | Shortest low phase while streaming 4 bytes per pulse | 22.5 clk; sustained rate then bounded by the link: 40·B clk per pulse (78 k pulses/s at B = 16, 312 k at B = 4) |
 | Timestamps into memory, no host (`@edge : mov R1, T` + `st R1, [R0+1]!`) | exact at ≥ 14 clk per edge (30 edges, 4 phases). `st T` alone would read T in its completion clock, 1–4 clk late depending on the slot |
 
+Tests: `test_capture_width_period` (|error| ≤ 1 step; 20 pulses at prescale 0, 5 at prescale 1 with and without the filter, 4 phases), `test_capture_shortest_phases` (high 1.5 clk and low 22.5 clk pass, low 20.5 fails in some phase), `test_capture_to_memory_min_spacing` (exact at 14 clk, not at 13).
+
 So width, period, duty, tachometer, IR pulse-distance decoding and autobaud are program work today; ROADMAP_V2 accelerator E is not needed.
 
 ### 3.4 On-chip bridge
@@ -106,14 +110,18 @@ Mechanism, no RTL: the producer stores the byte in a mailbox word and sets G0 (`
 
 | Bridge | Words (memory) | EXEC init | Result |
 |---|---|---|---|
-| UART RX (E1) → SPI controller TX (E0, mode 0, one byte per CS) | 23 (producer 9, consumer 14) + 1 mailbox | 11 + 17 | 40 random bytes exact on MOSI in all 4 phases from 1 Mbaud up to **3.57 Mbaud = 357 kB/s** (UART BIT 14) with SPI at 6.25 MHz (BIT 8) or 8.3 MHz (BIT 6). Fails at BIT 13, and at BIT 16 with SPI BIT 20/30: the SPI side needs ≈ 8·BIT + 70 clk per byte (CS low 8·BIT + 44 measured, plus CS inactive) and must be shorter than one UART character; UART cannot be paused, so a real program adds a ring buffer or an overrun `evt` (+2–4 words) |
+| UART RX (E1) → SPI controller TX (E0, mode 0, one byte per CS) | 23 (producer 9, consumer 14) + 1 mailbox | 11 + 17 | 40 random bytes exact on MOSI in all 4 phases from 1 Mbaud up to **3.57 Mbaud = 357 kB/s** (UART BIT 14) with SPI at 6.25 MHz (BIT 8) or 8.3 MHz (BIT 6). Fails at BIT 13, and at BIT 16 with SPI BIT 20/30: the SPI side needs ≈ 8·BIT + 70 clk per byte (CS low measured 8·BIT + 44 at BIT 6 and 8, 8·BIT + 56 at BIT 20, plus CS inactive) and must be shorter than one UART character; UART cannot be paused, so a real program adds a ring buffer or an overrun `evt` (+2–4 words) |
 | I2C target write (E0) → UART TX (E1) | 32 (I2C 24 incl. a 1-word stretch loop `jhi p2, $` on G0, UART 8) + 1 mailbox | 28 + 13 | 12 random bytes, 2 phases, all ACKed and delivered. At UART 1 Mbaud the I2C side limits: **38.8 kB/s** at 400 kHz (incl. START + address). At 115 200 and 28 800 baud the target holds SCL low until the mailbox is empty: on-chip back-pressure, every byte delivered at the UART rate. Reads (R/W = 1) not bridged |
 
 Both run with the host out of the data path; the host only loads the image.
 
-### 3.5 Area-only estimates (scratch branch `scratch/area-est`, local, never merged or pushed)
+Tests (the two prototype programs are inline in the test; the programs proper are rank 1 in §4): `test_bridge_uart_spi_size` (23 words), `test_bridge_uart_spi_max_rate` (UART BIT 14 and 50 exact in 4 phases at SPI BIT 8 and 6, BIT 13 fails), `test_bridge_spi_cs_low`, `test_bridge_i2c_uart` (32 words; 38.8 ± 0.5 kB/s at UART BIT 50; at BIT 434 and 1736 every byte delivered at the UART pace, i.e. SCL stretched).
 
-Minimal versions written only to synthesize: `make area` (yosys, sg13g2 typ lib); placed = synthesized × **1.458**, the factor measured on run 10 ((457.9k − 45.3k macro) / 283.0k synthesized). Headroom at 37.9 %: **267.0k µm² placed** to the 60 % limit.
+### 3.5 Area-only estimates (scratch branch `scratch/area-est`, never merged or pushed; deleted 2026-11-25)
+
+Minimal versions written only to synthesize (`jspe_xshift_a`, `jspe_xshift_ab`, `jspe_xovs`, `jspe_xlfsr2` on local commit e22fb3a), measured on that branch with
+`for m in jspe_shift jspe_xshift_a jspe_xshift_ab jspe_xovs jspe_lfsr jspe_xlfsr2; do make -s area B=$m LIB=<sg13g2_stdcell_typ_1p20V_25C.lib>; done`
+(yosys, sg13g2 typ lib). Totals, cells / µm²: jspe_shift 453 / 6 617.0, jspe_xshift_a 430 / 6 635.1, jspe_xshift_ab 452 / 7 028.8, jspe_xovs 53 / 1 415.2, jspe_lfsr 366 / 6 309.8, jspe_xlfsr2 514 / 9 002.4 (rerun before deletion, same as the first run). The branch is gone; the numbers below are the record. Placed = synthesized × **1.458**, the factor measured on run 10 ((457.9k − 45.3k macro) / 283.0k synthesized). Headroom at 37.9 %: **267.0k µm² placed** to the 60 % limit.
 
 | Item | What was synthesized | Δ synthesized | Placed | Core % |
 |---|---|---|---|---|
