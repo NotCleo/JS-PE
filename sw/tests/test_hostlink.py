@@ -170,6 +170,7 @@ def test_s6_run_mask_same_clock_and_step():
     assert e.val[2] == 0 and e.run == 1
 
 
+@pytest.mark.nolint
 def test_s6_exec_guard_wait_memory_jump_and_pending_rules():
     img, c, hl = s6_chip()
     # EXEC with a guard wait: stays pending; RUN, STEP, EXEC to it are link errors; STOP cancels it

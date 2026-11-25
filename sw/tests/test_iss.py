@@ -1,5 +1,6 @@
 # S1, S9, S6/S7 subset: instruction semantics by host EXEC against plain Python arithmetic.
 import random
+import pytest
 from harness import assemble_text, boot
 from jspe_asm import encode
 from jspe_iss import Chip
@@ -51,6 +52,7 @@ def ref_alu(op, a, b, cy):
         return (cy << 15) | (b >> 1), b & 1
 
 
+@pytest.mark.nolint
 def test_s1_alu_random():
     rnd = random.Random(7)
     ops = ("add", "adc", "sub", "cmp", "and", "or", "xor", "tst", "shl", "shr", "rlc", "rrc")
@@ -78,6 +80,7 @@ def test_s1_alu_random():
             assert (eng.Z, eng.Cy) == (int(r == 0), ncy), (op, hex(a), hex(b), cy)
 
 
+@pytest.mark.nolint
 def test_s1_alu_rd_t_and_l():
     c = chip()
     eng = c.eng[0]
@@ -93,6 +96,7 @@ def test_s1_alu_rd_t_and_l():
     assert eng.R[0] == 2
 
 
+@pytest.mark.nolint
 def test_s1_immediates():
     rnd = random.Random(3)
     for _ in range(300):
@@ -117,6 +121,7 @@ def test_s1_immediates():
             assert got == v and eng.Z == int(v == imm) and eng.Cy == int(v >= imm), (v, imm)
 
 
+@pytest.mark.nolint
 def test_s1_mov_and_timer_capture():
     c = chip()
     eng = c.eng[0]
@@ -127,6 +132,7 @@ def test_s1_mov_and_timer_capture():
     assert eng.P == 0xBEEF and eng.R[1] == eng.T and eng.T != 0xBEEF
 
 
+@pytest.mark.nolint
 def test_s1_ld_st_modes():
     for mode in range(4):
         for rb in range(4):
@@ -163,6 +169,7 @@ def test_s1_ld_st_modes():
                 assert regs(e2)[:4] == exp[:4]
 
 
+@pytest.mark.nolint
 def test_s1_ld_rd_t_dropped_and_address_wraps():
     c = chip()
     eng = c.eng[0]
@@ -174,6 +181,7 @@ def test_s1_ld_rd_t_dropped_and_address_wraps():
     assert eng.T == 9
 
 
+@pytest.mark.nolint
 def test_s1_rx_fifo_ops_and_overrun():
     c = chip()
     eng = c.eng[0]
@@ -196,6 +204,7 @@ def test_s1_rx_fifo_ops_and_overrun():
     assert eng.R[1] == 0xC35A and eng.ovr == 0
 
 
+@pytest.mark.nolint
 def test_s1_push_full_fifo_overrun():
     c = chip()
     c.tx_block[0] = True
@@ -214,6 +223,7 @@ def test_s1_undefined_traps():
         assert c.eng[0].trap == 1, hex(w)
 
 
+@pytest.mark.nolint
 def test_s1_st_reads_rs_at_completion():
     # D066: `st T` stores the count of the grant clock, in every slot phase
     seen = set()
@@ -359,6 +369,7 @@ def test_s6_trap_and_run_end_step_mode():
     assert eng.run == 1 and eng.PC > 2
 
 
+@pytest.mark.nolint
 def test_s6_stop_cancels_injected_memory_access():
     # D069 (3): the injected st never writes, also when STOP falls in a later slot clock
     for delay in range(1, 7):

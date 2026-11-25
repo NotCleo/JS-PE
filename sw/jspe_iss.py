@@ -6,6 +6,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from isa_def import ISA
 from jspe_asm import decode, encode, sext7, FORMATS
+from jspe_lint import Lint, mode_from_env
 
 HOST = ISA["host"]
 ESC = HOST["esc"]
@@ -393,6 +394,7 @@ class Engine:
 
         # ---------- timer (runs whether or not the engine is active)
         start = ctx.tstart
+        auto, reload = False, False
         if start is None and sedge:
             edge = ((sedge & 1) and rise[spin]) or ((sedge & 2) and fall[spin])
             if edge:
@@ -400,6 +402,7 @@ class Engine:
                     start = (o.P, 0)
                 elif not o.trun or o.T < o.C:
                     start = (o.P, 1)
+                auto = start is not None
         if start is not None:
             n.T, n.tone = m16(start[0]), start[1]
             n.trun, n.FA, n.PSC, n.skip = 1, 0, 0, 0
@@ -416,6 +419,7 @@ class Engine:
                         n.trun = 0
                     else:
                         n.T = o.P
+                        reload = True
                         s = o.FA + frac
                         n.FA, n.skip = s & 255, s >> 8
                 else:
@@ -455,6 +459,9 @@ class Engine:
         env.sig_clr |= ctx.sclr
         for op in ctx.lf:
             env.lf.append((e,) + op)
+        if env.lint is not None:
+            env.lint.engine(e, o, ins, fl, fire, wf is not None and ccmode[wf] == 2, auto, reload, wl, lsb, alt,
+                            apull)
         self.__dict__.update(n.__dict__)
 
     def armed(self, n, cyc):
@@ -1056,6 +1063,8 @@ class Chip:
         self.undef_reads = 0
         self.lvl_raw = 0
         self.fifo_log = None       # list of (cycle, engine, kind) when enabled
+        m = mode_from_env()
+        self.lint = Lint(m) if m else None          # read-before-write check (jspe_lint.py, JSPE_LINT)
 
     # ---------------------------------------------------------------- loading (direct, by backdoor)
     def load_image(self, img):
@@ -1115,7 +1124,7 @@ class Chip:
                               owner=(self.slotmap >> (2 * self.slot)) & 3, rx=self.rx, tx=self.tx,
                               pulses=self.link.pulses_next, flush={}, tx_push={},
                               rx_pop={}, sig_set=0, sig_clr=0, lf=[], mem_write=None, mem_write_h=None,
-                              undef_reads=0, rx_wr={}, tx_rd={})
+                              undef_reads=0, rx_wr={}, tx_rd={}, lint=self.lint)
         for e, p in self.pulses.items():
             env.pulses.setdefault(e, {}).update(p)
         self.pulses = {}
@@ -1223,7 +1232,13 @@ class Chip:
                 self.poly = (self.poly & 0xFFFF) | v << 16
             else:
                 self.lf_right = v & 1
+            if self.lint is not None and c in (18, 19):
+                self.lint.poly |= 0xFFFF << (16 * (c - 18))
+            if self.lint is not None and c in (16, 17):
+                self.lint.lf |= 0xFFFF << (16 * (c - 16))
         elif steps:
+            if self.lint is not None:
+                self.lint.lf_step(self.lf_right, self.poly)
             bit = steps[0][2]
             L = self.lfsr
             if self.lf_right:
