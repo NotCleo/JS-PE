@@ -6,7 +6,7 @@ import re
 import pytest
 from harness import PROG, prog, assemble, boot, simulate, changes
 from models import uart_decode
-from models import I2cControllerModel
+from models import I2cControllerModel, i2c_timing, i2c_violations
 from test_i2c import i2c_run
 
 MAP = {k: int(v) for k, v in re.findall(r"^\.equ\s+(\w+),\s*(\d+)", open(os.path.join(PROG, "cleo_mem.inc")).read(), re.M)}
@@ -78,11 +78,12 @@ def test_uart_tx_fault_fires_once_and_unarmed_ignored():
 
 
 # ---- i2c_tgt against the clocked controller model (writes to 0x42)
-def i2c_fault(script, word, slot=0):
+def i2c_fault(script, word, slot=0, thigh=60, tlow=65, rise=0, host_tx=()):
     c = boot(prog("i2c_tgt", FAULTS=1), slot)
     c.mem[MAP["FAULT_W"]] = word                          # written before the first transfer
-    m = I2cControllerModel(script, 60, 65)
-    mon, hist, drv = i2c_run(c, m, 60000, 0, done=m.done)
+    c.host_in[0] += list(host_tx)
+    m = I2cControllerModel(script, thigh, tlow)
+    mon, hist, drv = i2c_run(c, m, 200000, rise, done=m.done)
     return c, m, hist, drv
 
 
@@ -146,3 +147,19 @@ def test_i2c_stuck_sda():
     assert m.errs and all(e[0] == 2 for e in m.errs), m.errs                       # only 0x5A runs into it
     assert m.acks[:3] == [0, 0, 1] and m.acks[3:] == [0, 0]                       # then idle; next transfer fine
     assert c.host_bytes(0)[-2:] == [0x84, 0x33] and c.mem[MAP["FAULT_W"]] == 0
+
+
+@pytest.mark.parametrize("mode,thigh,tlow,rise", [("Fm", 30, 65, 15), ("Fm", 60, 65, 0), ("Sm", 250, 250, 50)])
+@pytest.mark.parametrize("word", [0, fword(1, pos=9)])           # unarmed; armed but only counting down
+def test_i2c_faults_build_um10204(mode, thigh, tlow, rise, word):
+    # the per-ACK check only stretches SCL: every transfer stays UM10204-compliant (tVD;DAT waived on stretched lows)
+    script = wr(0x11, 0x22) + [("S",), ("W", 0x85), ("R", 0), ("R", 1), ("P",)]
+    for ph in range(4):
+        c, m, hist, drv = i2c_fault(script, word, ph, thigh, tlow, rise, host_tx=[0xA5, 0x3C])
+        assert m.acks == [0, 0, 0, 0] and m.read == [0xA5, 0x3C] and m.errs == []
+        assert c.host_bytes(0) == [0x84, 0x11, 0x22, 0x85]
+        assert not i2c_violations(i2c_timing(hist, low_max=tlow + 5, rise=rise), mode), (ph, mode)
+    lows = scl_lows(hist)
+    base = sorted(lows)[len(lows) // 2]                                # an unstretched low phase
+    extra = [x - base for x in lows if x > base + 5]
+    assert len(extra) <= 4 and max(extra, default=0) <= (15 if word == 0 else 70), (base, extra)  # ACK slots only

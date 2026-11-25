@@ -40,9 +40,11 @@ Batch 1 is the v1 scope (REQUIREMENTS). Batch 2 programs were chosen in Phase 1 
 |---|---|---|
 | 2 | a 1-clk stop→start gap needs BIT ≥ 15 / 19 / 23 clk (3.3 / 2.6 / 2.1 Mbaud) | uart_rx.s header, D100 |
 | 1, 2 | above 3.1 Mbaud the host link must run at 8 clk per bit to keep characters back to back | uart_tx.s header |
+| 1 | `FAULTS = 1` (fault injection): BIT ≥ 46 clk, ≤ 1.08 Mbaud at 50 MHz (the fault check sits in the start bit); 29 + 1 words | uart_tx.s header, D210 |
 | 4 | outside the D101 timing rule (shared bus), the first sampling edge must come ≥ 32 clk after the CS rise | spi_tgt.s header, D093 |
 | 5 | no arbitration check (single controller); SDA stuck low needs a host recovery step | i2c_ctrl.s header, D041 |
 | 6 | 1 MHz needs THD 5 and has a 13-clk high phase against a 14-clk bound: marginal | i2c_tgt.s header |
+| 6 | `FAULTS = 1`: the fault-word check at every ACK slot stretches SCL even when unarmed (≈ 40 clk after the fall; the bus sees +10–13 clk at 400 kHz, none at 100 kHz; +62–65 clk while POS counts down); UM10204 Fm/Sm timing checked clean (I); 99 + 1 words | i2c_tgt.s header, D210, test_faults.py |
 | 8 | CVCHK = 0 has no code-violation check | manchester.s header, D099 |
 | 9 | 128 words: on the shipped 512-word SRAM build it runs next to UART TX + RX (measured, row "all"); on the flop fallback it fills the memory and runs alone; ACK delimiter and EOF unchecked; 29-bit frames error-flagged; resync is a hard re-time on every recessive→dominant edge (an 8-clk glitch 28–72 clk into a recessive bit drops that bit → CRC error, retry); TEC/REC/bus-off on the host; host must read ≥ 1 byte per 8 CAN bits | can.s header, D102–D105 |
 | 10 | 128 words: crossover SE0 ≤ 167 ns (8 clk) tolerated, longer ends the packet (host retries); J/K from D+ read back 6 clk before each drive (≤ 417 ns edge delay); no PID check (a corrupted PID → the RP2350 STALLs that request; OUT data lost). 512 words: the full 210 ns, J/K in a register, PID checks. Both: RP2350 sends no RDMEM/RDREG/SYNC while the bus is active; bus reset seen on RP2350 GPIOs; not run on hardware | usb_ls.s header, usb_ls_design.md 9, 12, D200–D202 |

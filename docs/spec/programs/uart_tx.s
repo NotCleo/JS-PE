@@ -14,7 +14,7 @@
 ; FAULTS = 1 (fault_design.md): the fault word FAULT_W + ENG is read in every start bit; ARMED -> TYPE 1 parity
 ;          bit inverted (PARITY builds), 2 stop bit 0 (then one stop bit), 3 break (line low ARG bit times from the start bit, then
 ;          the stop bit, ARG >= 2; the pulled byte is dropped); the word is cleared (fires once).
-;          Needs BIT * DIV >= FBIT = 46 (<= 1.08 Mbaud at 50 MHz). Words: 8N1 29 + fault word
+;          Trade-off: needs BIT * DIV >= FBIT = 46 (<= 1.08 Mbaud at 50 MHz; default build 4.5 Mbaud). Words: 8N1 29 + fault word
 
 .equ CLK_HZ, 50000000
 .equ BAUD,   1000000

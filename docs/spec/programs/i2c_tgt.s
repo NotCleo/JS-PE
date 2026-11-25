@@ -21,7 +21,9 @@
 ;          fault word FAULT_W + ENG is read; POS = ACK slots to let pass first (counted down in the word), then
 ;          TYPE 1 NACK ARG slots in a row (ARG counted down), 2 SCL held ARG x 16 clk longer, then ACK, 3 not
 ;          addressed (no ACK, back to idle), 4 SDA held low ARG x 16 clk from the ACK (watchers off, SCL released,
-;          then idle). Cleared when done (fires once).
+;          then idle). Cleared when done (fires once). Trade-off: the check stretches every ACK slot even when
+;          unarmed (~40 clk after the SCL fall; on the bus +10-13 clk at 400 kHz, 0 at 100 kHz; +62-65 clk while
+;          POS counts down); UM10204 Fm/Sm timing stays clean (sw/tests/test_faults.py, i2c_violations).
 
 .equ ADDR, 0x42
 .equ THD,  13                   ; own SDA changes THD + 3..4 clk after SCL falls (320-340 ns)
