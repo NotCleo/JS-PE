@@ -3,8 +3,8 @@
 ; pins (inputs only, no .pad: both pads stay en = 0): p0 = SCL (uio[6]), p1 = SDA (uio[5], shift input)
 ; host: evt 1 = START, evt 2 = repeated START, evt 3 = STOP; data bytes (MSB first; the first byte after evt 1/2 is
 ;       address + R/W, a 10-bit address is two bytes); ACK is implied, evt 4 = NACK after the byte before it;
-;       evt 5 + lo, hi = clock stretched: an SCL low phase next to an ACK (the one before the ACK clock and the one
-;       after it) lasted >= TLOW timer steps of 16 clk; lo, hi = its length in steps (320 ns at 50 MHz). An event
+;       evt 5 + lo, hi = long SCL low (target stretch or controller pause; a passive monitor cannot tell who held it):
+;       an SCL low phase next to an ACK (the one before the ACK clock and the one after it) lasted >= TLOW steps of 16 clk; lo, hi = its length in steps (320 ns at 50 MHz). An event
 ;       before both bytes means they are missing (START/STOP came first). evt 63 = LOST (OVR seen since the previous
 ;       START/STOP: a byte dropped at a full FIFO or an SCL edge missed), placed before evt 2 / evt 3.
 ;       A monitor started mid-transfer waits for the next START. The host never sends data to a monitor engine.
@@ -18,7 +18,8 @@
 
 .equ CLK_HZ, 50000000
 .equ RATE,   400000             ; bus rate the stretch threshold is derived from
-.equ TLOW,   CLK_HZ / RATE / 16 ; threshold in 16-clk steps: one SCL period (~2 x the nominal low phase)
+.equ TLOW,   2 * CLK_HZ / RATE / 16 ; threshold in 16-clk steps: two SCL periods (a controller's own pause at an
+                                ; ACK, e.g. i2c_ctrl's 112-160 clk at 400 kHz, stays below it)
 .equ ENG,    0                  ; engine and load address: override with -D
 .equ ORG,    352
 .engine ENG
