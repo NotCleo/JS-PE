@@ -64,10 +64,10 @@ mutate:
 	@mkdir -p build/formal; PATH=$(OSS):$$PATH python3 scripts/mutate.py $(B)
 
 swtest:
-	@JSPE_LINT=error python3 -m pytest -q -m "not slow" sw/tests 2>&1 | tail -15
+	@JSPE_LINT=error PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q -p xdist.plugin -n auto -m "not slow" sw/tests 2>&1 | tail -15
 
 swtest-all:
-	@JSPE_LINT=error python3 -m pytest -q sw/tests 2>&1 | tail -15
+	@JSPE_LINT=error PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q -p xdist.plugin -n auto sw/tests 2>&1 | tail -15
 
 clean:
 	rm -rf test/sim_build test/unit/sim_build test/*.xml test/unit/*.xml test/*.log test/unit/*.log build

@@ -79,8 +79,12 @@ def changes(chip, getbit, init=0):
 
 def record(name, ok, measured):
     os.makedirs(os.path.dirname(RESULTS), exist_ok=True)
-    with open(RESULTS, "a") as f:
-        f.write("%-58s %-4s %s\n" % (name, "pass" if ok else "FAIL", measured))
+    line = ("%-58s %-4s %s\n" % (name, "pass" if ok else "FAIL", measured)).encode()
+    fd = os.open(RESULTS, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)    # one write: safe under pytest -n
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
 
 
 def g_map(img):
