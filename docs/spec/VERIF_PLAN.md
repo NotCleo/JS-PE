@@ -267,4 +267,4 @@ SHOULD items with tests: concurrency C1, C2; monitor MON1; error injection EI1; 
 - Asynchronous inputs: only sub-clock phase is swept; metastability and analog edges (I2C rise) are delays in the pad model.
 - Slow rates are long in simulation (1 200 baud = 417 000 clk per character): long streams at L1 only, one character at L3.
 - SRAM macro: failed LVS in Phase 5 (D062, cause corrected in D128); the retry (D128–D130) passed and the SRAM build ships (D131), simulated with the PDK behavioural model. The flop fallback (`-DJSPE_MEM_FLOP`, `make test MEM=flop`) keeps every test runnable.
-- Monitor and error-injection programs do not exist yet (Phase 7); their tests are SHOULD.
+- Monitor programs (spi_mon, i2c_mon, uart_mon; monitor_design.md) and error injection (fault_design.md) were added after rtl-freeze-v1: MON1 at I (sw/tests/test_mon1.py, live buses between engines), monitor lockstep at R (test/test_monitor.py, SPI); EI1 at I, FI1 at R.
