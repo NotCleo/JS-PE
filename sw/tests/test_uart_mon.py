@@ -9,6 +9,7 @@ EV = 0x100
 
 
 def start(slot=0, **defs):
+    defs.setdefault("TS", 1)
     img = prog("uart_mon", **defs)
     c = Chip()
     for e in c.eng:
@@ -127,15 +128,16 @@ def test_1mbaud_at_gap_rule(slot):
 
 
 @pytest.mark.nolint
-@pytest.mark.parametrize("slot", [0, 1, 2, 3])
+@pytest.mark.parametrize("slot", [0] + [pytest.param(k, marks=pytest.mark.slow) for k in (1, 2, 3)])
 def test_every_wrap_offset(slot):
-    # T preset in each idle gap so the stop sample lands -100..+158 clk around a wrap: data exact, each engine's
+    # T preset in each idle gap so the stop sample lands -580..+158 clk around a wrap (the start edge is 475 clk
+    # before it): wraps at the start edge, in the data bits and at the record; data exact, each engine's
     # reconstructed start times at one constant offset, evt 60 used
     c = start(slot, BAUD=1000000)
-    out = wrap_offsets(c, 50, GAP - 25, list(range(-100, 160, 3)), slot)
+    out = wrap_offsets(c, 50, GAP - 25, list(range(-580, 160, 3 if slot else 5)), slot)
     for e in (E_A, E_B):
         d = [x[0] for x in out[e]]
-        assert max(d) - min(d) <= 1, (e, d)
+        assert max(d) - min(d) <= 14, (e, d)                     # an edge during the wrap call: <= 14 clk late
         assert not any(x[2] for x in out[e])
     assert any(v == EV | 60 for e in (E_A, E_B) for _, v in c.host_out[e])
     assert any(v == EV | 62 for e in (E_A, E_B) for _, v in c.host_out[e])
@@ -186,4 +188,109 @@ def test_real_wraps_long_idle():
 
 
 def test_words():
-    assert len(prog("uart_mon").words) == 30
+    assert [len(prog("uart_mon", TS=t).words) for t in (0, 1, 2)] == [12, 30, 49]
+
+
+def stream0(c, e):
+    # TS = 0 / 2 host view: data bytes, events as "eN"; TS = 2: ("ts", time) for evt 58/60 + lo, hi
+    out, w, pend, adj = [], 0, None, 0
+    for _, v in c.host_out[e]:
+        if v == EV | 62:
+            w += 1
+        elif v in (EV | 58, EV | 60):
+            pend, adj = [], (v == EV | 60)
+        elif v & EV:
+            pend = None if v == EV | 63 else pend
+            out.append("e%d" % (v & 0x3F))
+        elif pend is not None:
+            pend.append(v)
+            if len(pend) == 2:
+                out.append(("ts", (w - adj) * 65536 + 0xFFFF - (pend[0] | pend[1] << 8)))
+                pend = None
+        else:
+            out.append(v)
+    return out
+
+
+def back_to_back(ts, baud, rate, slot, n=24, gap=0.0):
+    c = start(slot, TS=ts, BAUD=baud)
+    bit = 50e6 / baud * (1 + rate)
+    ca = [(i * 37 + 5) & 0xFF for i in range(n)]
+    cb = ca[::-1]
+    a = UartSender(bit, ca, t0=c.cycle + 40.3 + slot * 0.3, gap=gap)
+    b = UartSender(bit, cb, t0=c.cycle + 40.3 + bit * 0.37, gap=gap)
+    run(c, a, b, int(max(a.end, b.end) - c.cycle) + 400)
+    return c, a, b, ca, cb
+
+
+@pytest.mark.parametrize("baud", [1000000, 2000000, 2630000])
+@pytest.mark.parametrize("rate", [-0.02, 0.0, 0.02])
+def test_ts0_both_directions_back_to_back(baud, rate):
+    # high-speed mode: uart_rx timing on both engines (BIT >= 19 clk)
+    for slot in range(4):
+        c, a, b, ca, cb = back_to_back(0, baud, rate, slot)
+        assert stream0(c, E_A) == ca and stream0(c, E_B) == cb, slot
+
+
+@pytest.mark.parametrize("rate", [-0.02, 0.0, 0.02])
+def test_ts2_back_to_back_1mbaud(rate):
+    # one burst per line: only its first character is timestamped
+    for slot in range(4):
+        c, a, b, ca, cb = back_to_back(2, 1000000, rate, slot)
+        for e, ch in ((E_A, ca), (E_B, cb)):
+            s = stream0(c, e)
+            assert isinstance(s[0], tuple) and s[1:] == ch, (slot, e, s[:4])
+
+
+def test_ts2_bursts_timestamped_at_their_start():
+    # bursts of 1..5 back-to-back characters, idle 2.5 .. 40 bits between them: a timestamp on each burst's first
+    # character, at one constant offset from its start edge
+    c = start(1, TS=2, BAUD=1000000)
+    edges, starts, firsts, chars, t = [], [], [], [], c.cycle + 60.0
+    for k in range(12):
+        n = k % 5 + 1
+        ch = [(k * 17 + i) & 0xFF for i in range(n)]
+        x = UartSender(50, ch, t0=t)
+        edges += x.edges
+        starts += x.starts
+        firsts.append(x.starts[0])
+        chars += [("ts",)] + ch
+        t = x.end + [125, 400, 2000][k % 3]
+    a = UartSender(50, [], t0=c.cycle + 40)
+    a.edges, a.end = edges, t
+    b = UartSender(50, [], t0=c.cycle + 40)
+    run(c, a, b, int(t - c.cycle) + 400)
+    s = stream0(c, E_A)
+    assert [("ts",) if isinstance(x, tuple) else x for x in s] == chars
+    off = [x[1] - f for x, f in zip([x for x in s if isinstance(x, tuple)], firsts)]
+    assert max(off) - min(off) <= 1, off
+
+
+@pytest.mark.nolint
+@pytest.mark.parametrize("slot", [0, 1, 2, 3])
+def test_ts2_every_wrap_offset(slot):
+    # each character after >= 2.5 idle bits: T preset in the gap so its timestamp attempt lands -120..+200 clk
+    # around a wrap (attempt moves to the next bit gap inside the window); all exact
+    c = start(slot, TS=2, BAUD=1000000)
+    offs = list(range(-120, 200, 4))
+    chars = [(i * 53 + 9) & 0xFF for i in range(len(offs))]
+    a = UartSender(50, chars, t0=c.cycle + 200.3 + slot, gap=150)
+    b = UartSender(50, [], t0=c.cycle + 40)
+    plan = {int(st - 75): (st, o) for st, o in zip(a.starts, offs)}
+    shift, seen = [0], []
+
+    def hook(ch, t):
+        if int(t) in plan:
+            st, o = plan.pop(int(t))
+            eng = ch.eng[E_A]
+            new = int(st + 80 - t + o) % 65536
+            shift[0] += eng.T - new
+            eng.T = new
+            seen.append(shift[0])
+    run(c, a, b, int(a.end - c.cycle) + 400, hook)
+    s = stream0(c, E_A)
+    assert [x for x in s if not isinstance(x, tuple)] == chars
+    ts = [x[1] for x in s if isinstance(x, tuple)]
+    assert len(ts) == len(chars)
+    d = [round(t - st - sh) for t, st, sh in zip(ts, a.starts, seen)]
+    assert max(d) - min(d) <= 14, d                                     # an edge during the wrap call
