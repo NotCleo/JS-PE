@@ -40,3 +40,89 @@ Triage of a private list of questions and ideas (planning notes, not in the repo
 | Input filter = majority vote, partly | Three equal samples (D033): a pulse shorter than the filter window is removed, it is not a vote. |
 | I2S at 48 kHz exceeds the host link | 16-bit stereo fits B = 16; only 32-bit stereo needs B = 8 (PIO link). |
 | A monitor needs new RX programs | UART: `uart_rx` drives no pad, so it is a monitor as is. SPI and I2C need variants. |
+
+## 3. Experiments (free: ISS + yosys, no src/ change)
+
+All runs on the golden ISS at 50 MHz unless noted, 4 slot phases where stated; scratch scripts and prototype programs were not committed (they are throwaway; the numbers below are the record).
+
+### 3.1 Software DMA
+
+Programs (one engine, 4 words each): `@hrx pull R1; @hrx pullh R1; st R1, [R0+1]!; jmp` (host FIFO → memory), `ld R1, [R0+1]!; @htx push; @htx pushh; jmp` (memory → host FIFO), `ld S, [R0+1]!; loop { @tick : p0 <- out }; jmp` (memory → pin, 16-bit words, timer-paced).
+
+| Slot map | FIFO → memory | memory → FIFO | memory → pin, cycle-exact (no late edge) |
+|---|---|---|---|
+| 0xE4 default, 1 slot of 4 | 2.50 words/µs (5.0 MB/s) | 2.50 words/µs | BIT ≥ 12 clk = 4.17 Mbit/s (data still correct at 11) |
+| `.slots 0, 1, 0, 2`: 2 slots for the DMA engine, E1/E2 one each, E3 stopped | 5.00 | 5.00 | BIT ≥ 6 = 8.33 Mbit/s (correct at 5) |
+| 0x00 solo | 5.56 | 5.00 | BIT ≥ 6 |
+
+- The fastest host link moves 1.25 MB/s = 0.625 words/µs (B = 4, HOSTIF 8): a software DMA engine is 4× faster than anything that can feed it from the host.
+- Effect on other engines' arming bounds: none. Grants depend only on the slot counter and the map (ARCH 2.2); measured: `uart_tx` on E1 or E3 next to a running FIFO → memory loop on E0 gives an identical pad trace in all four phases (and on E1/E2 under the 2-slot map). Giving the DMA engine two slots keeps G = 4, K = 4 (bound 4j + 2) for the engines with one slot, at the price of a fourth engine.
+- Derived, not run: a host-pre-encoded Manchester stream (two half-bits per data bit) from memory at BIT 6 is 4.17 Mbit/s TX, 1.8× manchester.s, still 2.4× short of 10BASE-T (2.5 clk half-bit at 50 MHz).
+
+### 3.2 Instruction profile
+
+Engine clocks per wire bit while the engine is active, split by what the engine did in that clock (fire of an instruction class, or "stall" = IR empty or a memory instruction in progress; waiting clocks excluded). CAN and USB TX counted inside the frame only. "Pair" = two consecutive instructions where the second cannot wait; "saved" = clocks from the first fire to the second, i.e. what fusing them would remove.
+
+| Program, rate | clk/bit | busy clk/bit | fires/bit | pin/shift | branch | ALU | stream / timer / mem | stall | top pair (clk saved per bit) |
+|---|---|---|---|---|---|---|---|---|---|
+| uart_tx 1 Mbaud | 50 | 1.69 | 1.22 | 1.01 | 0.11 | — | 0.10 / 0.01 / — | 0.47 | `jrx`+`pull` 0.19 |
+| uart_rx 1 Mbaud | 50 | 1.42 | 1.20 | 0.80 | 0.20 | — | 0.10 / 0.10 / — | 0.22 | `shin`+`push` 0.10 |
+| spi_ctrl mode 0 | 8 | 5.62 | 2.92 | 2.15 | 0.24 | 0.12 | 0.26 / 0.15 / — | 2.70 | `push`+`add` 0.50, `add`+`jz` 0.50 |
+| spi_tgt mode 0 | 12.5 | 3.08 | 1.39 | 1.06 | 0.11 | 0.03 | — / 0.02 / 0.12 | 1.69 | `ld`+`jmp` 0.86 |
+| i2c_tgt 400 kHz | 125 | 3.17 | 1.77 | 1.38 | 0.12 | 0.02 | 0.11 / 0.11 / — | 1.41 | `push`+`tset` 0.46 |
+| i2c_ctrl 400 kHz | 125 | 32.35 | 11.90 | 4.10 | 3.49 | 0.56 | 0.44 / 3.31 / — | 20.44 | `call`+`tset` 3.1, `ret`+pin 3.0 |
+| ws2812 | 63 | 7.65 | 4.28 | 3.01 | 1.14 | — | 0.12 / 0.01 / — | 3.36 | pin+`jw` 1.0 |
+| manchester TX | 22 | 3.00 | 2.29 | 2.02 | 0.13 | — | 0.12 / 0.01 / — | 0.71 | `jrx`+`pull` 0.35 |
+| manchester RX | 22 | 2.55 | 1.38 | 1.00 | 0.16 | 0.17 | 0.01 / — / — | 1.17 | `cmp`+`jnz` 0.59 |
+| can TX, 8-byte frame | 100 | 20.88 | 6.21 | 1.00 | 2.92 | 2.14 | 0.09 / 0.01 / — | 14.67 | `add #-1`+`jnz` 7.28 |
+| can RX, same frame | 100 | 16.27 | 4.58 | 0.99 | 2.30 | 1.15 | 0.10 / — / — | 11.70 | `jnrun`+`add` 4.20, `add #-1`+`jnz` 3.66 |
+| usb_ls RX, SETUP + DATA0 | 32 | 7.65 | 3.80 | 1.02 | 2.10 | 0.39 | 0.10 / — / 0.06 | 3.85 | `jw`+`jnrun` 2.30 |
+| usb_ls TX, DATA1 8 bytes | 32 | 21.10 | 10.51 | 1.99 | 5.74 | 2.73 | — / — / 0.04 | 10.59 | `jrun`+`add` 2.97, `add #-1`+`jz` 2.00 |
+
+- The micro-loop already fuses the hottest pair of the NRZ programs (pin + pin at 1 clk, no fetch): UART, SPI, Manchester and the targets need 1.4–5.6 busy clocks per bit.
+- Stall (slot wait for a fetch after a redirect or an unprefetched word) is the largest busy class wherever busy > 3 clk/bit: the cost is the shared memory port (G = 4), not execution.
+- Fused pair that would save most: **decrement-and-branch** (`add Rn, #-1` + `jnz`/`jz`: CAN TX 7.3, CAN RX 3.7, USB TX 2.0 clk/bit), then **branch on run after a shift** (`jnrun`/`jrun`: CAN RX 4.2, USB TX 3.0, USB RX 2.3).
+- No shipped program is limited by it: only USB TX is tight (21.1 of 32 clk/bit = 66 %); CAN uses 21 of 100. A 2-slot map for the USB TX engine (3.1) is a free lever with the same effect. Fused instructions: **drop** (decoder RTL next to the fire path, gain only on rows that already pass).
+
+### 3.3 Timer capture with `mov rd, T`
+
+Program (7 words): free-running timer, P = 0xFFFF; `@rise p0 : mov R1, T`, `@fall p0 : mov R2, T`, four `@htx` pushes, `jmp`. Host computes width = R1 − R2 and period from successive R1 (mod 2¹⁶, down-counter).
+
+| Check | Result |
+|---|---|
+| 20 random pulses, high 5–3 000 clk, low 200–3 000 clk, 4 slot phases, sub-clock edge phases | every pulse captured, OVR 0, no late fire; width error −0.87…+0.81 clk, period error −0.74…+0.89 clk: input quantization only (resolution 1 clk = 20 ns) |
+| Prescale 1 (÷16) | error within one step (±16 clk = 320 ns) |
+| Input filter on | same errors: both edges see the same added latency |
+| Range per prescale (65 536 steps) | 1.31 ms at 20 ns; 21 ms at 320 ns; 335 ms at 5.12 µs; longer by host-side wrap counting |
+| Shortest high phase | 1.5 clk (the fall guard is prefetched and armed 1 clk after the rise fires) |
+| Shortest low phase while streaming 4 bytes per pulse | 22.5 clk; sustained rate then bounded by the link: 40·B clk per pulse (78 k pulses/s at B = 16, 312 k at B = 4) |
+| Timestamps into memory, no host (`@edge : mov R1, T` + `st R1, [R0+1]!`) | exact at ≥ 14 clk per edge (30 edges, 4 phases). `st T` alone would read T in its completion clock, 1–4 clk late depending on the slot |
+
+So width, period, duty, tachometer, IR pulse-distance decoding and autobaud are program work today; ROADMAP_V2 accelerator E is not needed.
+
+### 3.4 On-chip bridge
+
+Mechanism, no RTL: the producer stores the byte in a mailbox word and sets G0 (`st S, [Rk]`, `sset #0`); the consumer binds the *input* of one of its logical pins to G0 (BIND source 16; the pin's output stays CS or TXD), makes condition cell 0 = that pin's level, waits `@c0`, then `ld S, [Rk]`, `sclr #0`.
+
+| Bridge | Words (memory) | EXEC init | Result |
+|---|---|---|---|
+| UART RX (E1) → SPI controller TX (E0, mode 0, one byte per CS) | 23 (producer 9, consumer 14) + 1 mailbox | 11 + 17 | 40 random bytes exact on MOSI in all 4 phases from 1 Mbaud up to **3.57 Mbaud = 357 kB/s** (UART BIT 14) with SPI at 6.25 MHz (BIT 8) or 8.3 MHz (BIT 6). Fails at BIT 13, and at BIT 16 with SPI BIT 20/30: the SPI side needs ≈ 8·BIT + 70 clk per byte (CS low 8·BIT + 44 measured, plus CS inactive) and must be shorter than one UART character; UART cannot be paused, so a real program adds a ring buffer or an overrun `evt` (+2–4 words) |
+| I2C target write (E0) → UART TX (E1) | 32 (I2C 24 incl. a 1-word stretch loop `jhi p2, $` on G0, UART 8) + 1 mailbox | 28 + 13 | 12 random bytes, 2 phases, all ACKed and delivered. At UART 1 Mbaud the I2C side limits: **38.8 kB/s** at 400 kHz (incl. START + address). At 115 200 and 28 800 baud the target holds SCL low until the mailbox is empty: on-chip back-pressure, every byte delivered at the UART rate. Reads (R/W = 1) not bridged |
+
+Both run with the host out of the data path; the host only loads the image.
+
+### 3.5 Area-only estimates (scratch branch `scratch/area-est`, local, never merged or pushed)
+
+Minimal versions written only to synthesize: `make area` (yosys, sg13g2 typ lib); placed = synthesized × **1.458**, the factor measured on run 10 ((457.9k − 45.3k macro) / 283.0k synthesized). Headroom at 37.9 %: **267.0k µm² placed** to the 60 % limit.
+
+| Item | What was synthesized | Δ synthesized | Placed | Core % |
+|---|---|---|---|---|
+| Oversampling capture register | per engine: 16-bit shift register of the engine's input pin every clock (or timer step), enable, rcfg read leg (1 415 µm²) ×4 | 5 661 | 8.3k | +0.7 |
+| Timer-clocked shift (minimal A) | `jspe_shift` with tick → `out`-shift and tock → `shin`, 2 SHCFG bits; output via the existing follow pins, words via the existing auto-transfer | +18 per engine (ABC noise; by cell count ≈ 0.15k) ×4 | ≤ 0.9k | < 0.1 |
+| + Manchester / biphase-mark TX | the above + half-bit phase and biphase flops, 2 mode bits, line-code value for the follow pin | +412 per engine ×4, + ~0.1k epins mux | 2.5k | +0.2 |
+| Second LFSR | `jspe_lfsr` instance (6 310) + per-engine select bit + rcfg read legs | 9 002 | 13.1k | +1.1 |
+| All four | | ≈ 16.4k | ≈ 24k | 37.9 → 39.9 |
+
+- Area no longer constrains any of them (ROADMAP_V2's 27k/11k/10k placed were per-cell guesses; the minimal versions are smaller, the second LFSR is close).
+- The real costs: D124 freeze, the D127 chain (isa.yaml → gen_isa → ISS → RTL → formal → lockstep → bound sweep → GDS → GLS) and timing: tick/tock would become shift enables feeding S, the FIFO strobes and the shared LFSR step (a cross-engine path), next to the fire path D081 cut.
+- Minimal A + B does not make 10BASE-T possible: RX still needs memory transfer at line rate and a 40/60 MHz clock (ROADMAP_V2 §3; out of scope, D125).
