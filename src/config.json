@@ -41,9 +41,8 @@
   "//": "!!! DO NOT CHANGE ANYTHING BELOW THIS POINT !!!",
   "//": "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
 
-  "//": "Save some time",
+  "//": "Save some time (RUN_KLAYOUT_DRC is set to 1 at the end, D058)",
   "RUN_KLAYOUT_XOR": 0,
-  "RUN_KLAYOUT_DRC": 0,
 
   "//": "Don't put clock buffers on the outputs",
   "DESIGN_REPAIR_BUFFER_OUTPUT_PORTS": 0,
@@ -62,7 +61,7 @@
   "FP_IO_HLENGTH": 2,
   "FP_IO_VLENGTH": 2,
 
-  "FP_PDN_VPITCH": 50.0,
+  "//": "FP_PDN_VPITCH is set at the end (D058)",
   "FP_PDN_VWIDTH": 2.1,
 
   "//": "Clock",
@@ -75,5 +74,53 @@
   "MAGIC_DEF_LABELS": 0,
 
   "//": "Only export pin area in LEF (without any connected nets)",
-  "MAGIC_WRITE_LEF_PINONLY": 1
+  "MAGIC_WRITE_LEF_PINONLY": 1,
+
+  "//": "===== Cleo: 512x16 SRAM macro (D058, D128, D129). Changes above: RUN_KLAYOUT_DRC 1, FP_PDN_VPITCH; the rest is added here =====",
+  "//": "jspe_mem builds the macro instead of the 128x16 flops (D062 build switch).",
+  "VERILOG_DEFINES": ["JSPE_MEM_SRAM"],
+
+  "//": "Program memory u_mem.u_sram, flush bottom-left, FS = signal pins (Metal2) on its top edge, facing the logic.",
+  "MACROS": {
+    "RM_IHPSG13_1P_512x16_c2_bm_bist": {
+      "gds": ["pdk_dir::libs.ref/sg13cmos5l_sram/gds/RM_IHPSG13_1P_512x16_c2_bm_bist.gds"],
+      "lef": ["pdk_dir::libs.ref/sg13cmos5l_sram/lef/RM_IHPSG13_1P_512x16_c2_bm_bist.lef"],
+      "spice": ["pdk_dir::libs.ref/sg13cmos5l_sram/cdl/RM_IHPSG13_1P_512x16_c2_bm_bist.cdl"],
+      "nl": [],
+      "spef": {},
+      "lib": {
+        "nom_typ_1p20V_25C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x16_c2_bm_bist_typ_1p20V_25C.lib"],
+        "nom_fast_1p32V_m40C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x16_c2_bm_bist_fast_1p32V_m55C.lib"],
+        "nom_slow_1p08V_125C": ["pdk_dir::libs.ref/sg13cmos5l_sram/lib/RM_IHPSG13_1P_512x16_c2_bm_bist_slow_1p08V_125C.lib"]
+      },
+      "instances": {
+        "u_mem.u_sram": { "location": [3.36, 3.78], "orientation": "FS" }
+      }
+    }
+  },
+  "FP_MACRO_HORIZONTAL_HALO": 2.0,
+  "FP_MACRO_VERTICAL_HALO": 0.48,
+
+  "//": "Macro supplies: VDD! (periphery) and VDDARRAY! (bit cells) both to VPWR, VSS! to VGND.",
+  "PDN_MACRO_CONNECTIONS": [
+    "u_mem\\.u_sram VPWR VGND VDD! VSS!",
+    "u_mem\\.u_sram VPWR VGND VDDARRAY! VSS!"
+  ],
+
+  "//": "src/pdn_cfg.tcl: column straps above the macro (stdcell grid), then after pdngen one Metal4 strap over each of the",
+  "//": "40 supply columns, overlapping the core strap at macro top + halo (D129). pdngen alone cannot join same-layer macro pins.",
+  "PDN_CFG": "dir::pdn_cfg.tcl",
+
+  "//": "Metal4 base stripes (centreline = core x 2.88 + offset + k*pitch) cross the macro only on supply columns:",
+  "//": "pitch 67.66, offset 17.39 put 4 pairs on columns at local x 15.5/21.12, 82.94/88.56, 151.05/156.67, 218.49/224.11.",
+  "FP_PDN_VPITCH": 67.66,
+  "FP_PDN_VOFFSET": 17.39,
+  "FP_PDN_VSPACING": 3.52,
+
+  "//": "Magic reads the macro from its LEF, whose Metal4 OBS bar at the VDD!/VDDARRAY! break (local y 39-45) every column strap crosses;",
+  "//": "the GDS has no metal there. Magic DRC off and that overlap waived; KLayout DRC with the CMOS5L precheck deck instead.",
+  "//": "PSM grid check and IR-drop report stay on (template defaults): with the straps the grid is connected (D129).",
+  "RUN_MAGIC_DRC": 0,
+  "RUN_KLAYOUT_DRC": 1,
+  "ERROR_ON_ILLEGAL_OVERLAPS": 0
 }

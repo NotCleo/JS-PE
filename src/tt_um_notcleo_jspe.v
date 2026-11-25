@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 `default_nettype none
-// JS-PE top (ARCH 1): pins, host link, arbiter, memory, 4 engines with RX/TX FIFOs, signal flags, LFSR.
+// Cleo top (ARCH 1): pins, host link, arbiter, memory, 4 engines with RX/TX FIFOs, signal flags, LFSR.
 module tt_um_notcleo_jspe (
     input  wire [7:0] ui_in,
     output wire [7:0] uo_out,
