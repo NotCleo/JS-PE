@@ -11,6 +11,10 @@
 ;          start bit begins exactly 1.5 bits after the stop edge and the frames stay back to back
 ; 9 data bits: the grid restarts for every character (stop bit up to 15 clk longer)
 ; above 3.1 Mbaud the host link must run at 8 clk per bit to keep characters back to back
+; FAULTS = 1 (fault_design.md): the fault word FAULT_W + ENG is read in every start bit; ARMED -> TYPE 1 parity
+;          bit inverted (PARITY builds), 2 stop bit 0 (then one stop bit), 3 break (line low ARG bit times from the start bit, then
+;          the stop bit, ARG >= 2; the pulled byte is dropped); the word is cleared (fires once).
+;          Needs BIT * DIV >= FBIT = 46 (<= 1.08 Mbaud at 50 MHz). Words: 8N1 29 + fault word
 
 .equ CLK_HZ, 50000000
 .equ BAUD,   1000000
@@ -25,9 +29,14 @@
 .equ STOP2,  0                  ; 1 = two stop bits
 .equ STOP15, 0                  ; 1 = 1.5 stop bits
 .assert STOP2 + STOP15 < 2, "one stop-bit option"
+.equ FAULTS, 0                  ; 1 = fault-injection variant
+.include "cleo_mem.inc"
 
 .equ ENG,    0                  ; engine and load address: override with -D
 .equ ORG,    0
+.equ FW,     FAULT_W + ENG
+.equ FBIT,   46                 ; FAULTS: min bit time in steps (longest path: start tick -> break wait armed, 45 clk)
+.assert (FAULTS == 0) | (BIT * DIV >= FBIT), "FAULTS needs BIT * DIV >= FBIT"
 .engine ENG
 .if INV
 .pad uo0, p0, inv                ; inverted line: the pad inverts idle, start, data and stop
@@ -49,6 +58,10 @@
         wcfg  SHCFG, R0
         li    R0, #(PARITY == 2) << 2   ; TAPCFG: q = parity, start value 1 for odd
         wcfg  TAPCFG, R0
+.if FAULTS
+        li    R2, #FW                   ; fault word pointer
+        li    R0, #0                    ; stored to clear the fault word
+.endif
         p0 <- 1                         ; idle level before the pad is enabled
 .entry idle
 .code
@@ -61,11 +74,48 @@ tx:     pull  S                         ; next character (present: checked by @h
         tsync
 .endif
         @tick : p0 <- 0                 ; start bit
+.if FAULTS
+        .deadline FBIT - 1, norm        ; every path arms its next guard within the start bit
+        .deadline FBIT - 1, f1
+        .deadline FBIT - 1
+        .deadline FBIT - 1, fbrk
+        ld    R1, [R2]                  ; fault word
+        shl   R1, R1                    ; CY = ARMED
+        jnc   norm
+        shl   R1, R1
+        shl   R1, R1                    ; CY = TYPE[1]
+        jnc   f1
+        shl   R1, R1                    ; CY = TYPE[0]; R1 = POS, ARG << 4
+        jc    fbrk
+        loop { @tick : p0 <- out }      ; TYPE 2: stop bit 0
+        st    R0, [R2]                  ; consumed (off the start-bit path)
+.if PARITY
+        @tick : p0 <- q
+.endif
+        @tick : p0 <- 0                 ; low stop bit, then the normal stop bit (line back to idle)
+        jmp   stop
+f1:     loop { @tick : p0 <- out }      ; TYPE 1: parity bit inverted (no effect without PARITY)
+        st    R0, [R2]
+.if PARITY
+        jpar  fpar
+        @tick : p0 <- 1                 ; PAR = 0: drive 1
+        jmp   stop
+fpar:   @tick : p0 <- 0
+.endif
+        jmp   stop
+fbrk:   add   R1, #-16                  ; TYPE 3: break (ARG >= 2); the start bit is the first low bit
+brk:    @tick : nop                     ; one more low bit
+        st    R0, [R2]                  ; consumed (repeated: harmless)
+        add   R1, #-16
+        jnz   brk
+        jmp   stop
+norm:
+.endif
         loop { @tick : p0 <- out }      ; data bits, LSB first
 .if PARITY
         @tick : p0 <- q                 ; parity bit
 .endif
-        @tick : p0 <- 1                 ; stop bit
+stop:   @tick : p0 <- 1                 ; stop bit
 .if STOP2
         @tick : nop                     ; second stop bit
 .endif
@@ -76,3 +126,8 @@ tx:     pull  S                         ; next character (present: checked by @h
         .deadline 10, tx
         jrx   tx                        ; another character is waiting: back to back
         jmp   idle
+.if FAULTS
+.reserve FW, 1
+.org FW
+        .word 0
+.endif
