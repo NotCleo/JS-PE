@@ -31,7 +31,7 @@ What can be wired to the chip and what it needs. Pin maps and parts come from [d
 | 1-Wire device | open-drain, µs-scale slots | one `uio` `od` pad | 4.7 kΩ pull-up | feasible (no program) |
 | 5 V logic device | any | any | level shifter | needs external parts |
 | Ethernet PHY (RMII) | 2 bits every clock at 50 MHz | — | — | not supported: beyond the 3–4 clk reaction floor |
-| USB low speed | NRZI, bit stuffing, differential pair | — | — | not supported (future work) |
+| USB 2.0 low-speed host port (PC, hub) | USB LS device, 1.5 Mbit/s: control endpoint + interrupt IN (HID keyboard demo); NRZI, stuffing, CRC5 via token keys, CRC16, ACK/NAK/STALL | D+ `uio[4]`, D− `uio[5]` (pad inv), pull-up switch `uio[6]` | 2 x 27 Ω series, 1.5 kΩ D− pull-up from `uio[6]`, micro-USB breakout (section 3, USB LS) | added after rtl-freeze-v1; ISS + RTL lockstep; not on hardware |
 
 The RP2350 on the demo board can stand in for every supported partner (PIO UART/SPI, `SoftI2C`, GPIO capture), which is how the host examples are written (D008).
 
@@ -112,6 +112,22 @@ flowchart LR
   PAD --- BUS
   BUS --- NODE[RP2350 PIO node, open-drain]
 ```
+
+### USB LS (Pmod)
+Program [usb_ls.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls.s), design note [usb_ls_design.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls_design.md), host [usb_hid.py](https://github.com/NotCleo/JS-PE/blob/main/host/examples/usb_hid.py) (not run on hardware).
+
+| Pmod net | Chip pad | Part | To the connector |
+|---|---|---|---|
+| D+ | `uio[4]` (E0.p0 drive, E1.p0 receive) | 27 Ω series | micro-USB breakout D+ |
+| D− | `uio[5]` (E0.p1, pad inv; E1.p1) | 27 Ω series | micro-USB breakout D− |
+| attach | `uio[6]` (E0.p2: 1 = attached, z = detached) | 1.5 kΩ from `uio[6]` to D− (device side of the 27 Ω) | — |
+| GND | GND | — | breakout GND |
+| VBUS, ID | — | unconnected (the board is powered by its own USB; never join the two VBUS rails) | — |
+
+- Levels: the pads drive 0 / 3.3 V; LS needs VOH ≥ 2.8 V into the host's 15 kΩ pull-downs and VOL ≤ 0.3 V: met by CMOS pads at LS currents. Edges: the pads are fast; the 27 Ω resistors and the cable slow them (LS asks 75–300 ns). Untested on hardware.
+- The demo board also wires the RP2350 to `uio[4]`, `uio[5]`, `uio[6]` (GPIO29–31): keep them inputs without pulls during USB operation; their pin capacitance adds to D+/D− (fine at LS). The RP2350 detects bus reset from GPIO29/30 (SE0 ≥ 2.5 µs), not over the link.
+- Builds: 128 words ignores crossover SE0 up to 167 ns and reads D+ back for the J/K state; 512 words covers the 210 ns USB limit, keeps J/K in a register and checks PIDs (usb_ls_design.md 12).
+- Fallback if the raw pads misbehave (edges, crossover, EMI): a USB 1.1 full/low-speed transceiver of the USB1T11A class on the Pmod; its single-ended receive outputs then feed `uio[4]`/`uio[5]` (program pin binds unchanged except the drive path, which needs the transceiver's VP/VM/OE inputs on spare pads: a program change).
 
 ## 4. Not supported: Ethernet (concept only)
 

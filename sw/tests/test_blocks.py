@@ -48,6 +48,7 @@ def ref_shift(S, f, wl, lsb):
     return (((S & mask) >> 1) | (f << (wl - 1))) if lsb else (((S << 1) | f) & mask)
 
 
+@pytest.mark.nolint
 def test_s2_out_shift_against_reference():
     rnd = random.Random(11)
     for _ in range(150):
@@ -70,6 +71,7 @@ def test_s2_out_shift_against_reference():
             del wend
 
 
+@pytest.mark.nolint
 def test_s2_shin_and_diff_against_reference():
     rnd = random.Random(12)
     for _ in range(60):
@@ -89,6 +91,7 @@ def test_s2_shin_and_diff_against_reference():
             assert (c.eng[0].S, c.eng[0].B) == (s, b), (wl, lsb, inv, diff, k)
 
 
+@pytest.mark.nolint
 def test_s2_smp_leaves_s_and_n():
     c = chip()
     wcfg(c, "BIND01", 4)
@@ -101,6 +104,7 @@ def test_s2_smp_leaves_s_and_n():
     assert (e.S, e.N, e.B, e.PAR) == (0x5A, 0, 1, 1)
 
 
+@pytest.mark.nolint
 def test_s2_run_length_and_r1():
     c = chip()
     wcfg(c, "SHCFG", 15)
@@ -450,6 +454,7 @@ go:     p0 <- 1, p1 <- 0
     assert c.uo & 1 == 0                                                 # inverted
 
 
+@pytest.mark.nolint
 def test_s8_follow_one_clock_behind_s():
     c = chip()
     wcfg(c, "SHCFG", 7)
@@ -503,6 +508,7 @@ def crc_via_lfsr(data, poly, init, width, right, xorout):
     return (v ^ xorout) & ((1 << width) - 1)
 
 
+@pytest.mark.nolint
 def test_s9_lfsr_crc_check_values():
     m = b"123456789"
     assert crc_via_lfsr(m, 0x07, 0, 8, 0, 0) == 0xF4
@@ -527,6 +533,7 @@ def test_s9_signal_flags_clear_wins_and_rcfg():
     assert rcfg(c, "SIG", e=2) == 0x08
 
 
+@pytest.mark.nolint
 def test_s9_lfsr_lowest_engine_wins_and_write_beats_step():
     c = chip()
     c.eng[1].R[0], c.eng[2].R[0] = 0x1111, 0x2222
@@ -631,6 +638,7 @@ go:     loop {
 
 
 # ---------------------------------------------------------------- S2 q sources, MIS; S8 input filter
+@pytest.mark.nolint
 def test_s2_q_sources():
     for alt in range(4):
         c = chip()
@@ -649,6 +657,7 @@ def test_s2_q_sources():
             assert e.B == 1 - B0 and e.RUN == 1          # stuff bit enters the tap update
 
 
+@pytest.mark.nolint
 def test_s2_mis():
     # MIS = level(inpin) ^ LD, read through jmis under EXEC (a taken jump sets PC)
     c = chip()

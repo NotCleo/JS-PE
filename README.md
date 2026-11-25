@@ -18,7 +18,7 @@ Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https:/
 |---|---|
 | Process | IHP SG13 130 nm through the Tiny Tapeout IHP template, 8x4 tiles |
 | Architecture | 4 engines, 512 x 16 shared program memory (SRAM macro), 67 instructions, 3-pin host link |
-| Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A |
+| Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A, USB low speed (simulation) |
 | Clock | 50 MHz (about 57 MHz possible, estimate) |
 | Area | 37.9 % of the core including the SRAM macro (my limit: 60 %) |
 | Sign-off | Tiny Tapeout precheck, DRC, LVS and antenna pass; setup and hold met in all corners |
@@ -201,7 +201,7 @@ Details: [verification](https://github.com/NotCleo/JS-PE/blob/main/docs/VERIFICA
 - I2C has no multi-controller arbitration. CAN leaves fault confinement to the host and flags 29-bit frames as errors.
 - No formal proofs for the ALU and the memory, and no code coverage measured.
 - The simulator and the RTL come from the same spec, so a misreading could be shared; the independent protocol models, formal proofs and reviews are the check against that.
-- USB low speed and Ethernet are not supported: they need faster reactions than 3–4 clocks at 50 MHz.
+- USB low speed runs only in simulation (ISS and RTL lockstep, 48 MHz, [usb_ls.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls.s)); the RP2350 handles descriptors and token keys. Ethernet is not supported: it needs faster reactions than 3–4 clocks at 50 MHz.
 
 ![](https://github.com/NotCleo/JS-PE/blob/main/docs/images/ethernet_concept.jpeg?raw=true)
 
@@ -262,7 +262,7 @@ More: [AI usage](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md).
 - One CRC unit per engine, so two CRC protocols can run at once.
 - Deeper FIFOs, so running streams tolerate a busy host link for longer.
 - Capture and replay of pin traffic, for protocols nobody has written a program for yet.
-- USB low speed.
+- USB low speed on hardware (the HID demo in host/examples/usb_hid.py has not run on a board).
 - 32-bit shifts for long fields.
 
 ----
