@@ -1,5 +1,5 @@
 ; uart_mon.s - passive UART monitor: two lines (both directions) on two engines, one shared code copy (monitor_design.md)
-; words: 12 (TS = 0), 30 (TS = 1), 49 (TS = 2) | engines: 2 | all rates simulation (ISS), senders at -2 %, 0, +2 %
+; words: 12 (TS = 0), 31 (TS = 1), 50 (TS = 2) | engines: 2 | all rates simulation (ISS), senders at -2 %, 0, +2 %
 ; max: TS = 0: 2.63 Mbaud back to back on both lines (BIT >= 19 clk, static bound; 1, 2, 2.63 Mbaud tested)
 ;      TS = 1: back to back <= 156 kbaud (115200 tested); 1 Mbaud with >= 2.7 idle bits per character
 ;      TS = 2: 1 Mbaud back to back (1.25 Mbaud fails with a -2 % sender); timestamp on the first character after a
@@ -13,7 +13,8 @@
 ;       by tock (C); evt 62 = timer wrap (watcher 1 call). Timestamp = T captured 1 clk after the start edge is seen,
 ;       up to 14 clk late when the edge comes during a wrap call. time = W * 65536 + 0xFFFF - T, W = evt 62 count
 ;       before the hi byte, minus 1 when evt 60 marks it (a wrap came between the start edge and the push).
-;       Lost entries may include evt 62/60: after evt 63 the time base restarts (the wrap count may be short).
+;       Lost entries may include evt 62/60: after evt 63 the host starts a new time epoch. Both engines start their
+;       timers with the shared entry instruction (boot) in the same RUN: A and B times differ by <= 3 clk.
 ; TS = 1 record per character: [evt 63] [evt 60] lo, hi, byte [evt 1], pushed after the stop sample; near a wrap
 ;       (T < TSW or > 0xFFFF - TSH) it first waits until that wrap's evt 62 is out. evt 63 before the record: the
 ;       host drops the bytes of an unfinished record there.
@@ -64,7 +65,6 @@
         mov   L, R1                     ; TS = 2: the first character is timestamped
         mov   R1, C
         shr   S, R2                     ; S = BIT/2 (start path)
-        tsync
         watch #2
 .else
         li    R0, #BIT0 - 1
@@ -76,7 +76,11 @@
         wcfg  TCFG, R0
 .endif
 .endif
+.if TS
+.entry boot
+.else
 .entry rx
+.endif
 
 .engine ENG_B
 .init
@@ -97,7 +101,6 @@
         mov   L, R1                     ; TS = 2: the first character is timestamped
         mov   R1, C
         shr   S, R2                     ; S = BIT/2 (start path)
-        tsync
         watch #2
 .else
         li    R0, #BIT0 - 1
@@ -109,7 +112,11 @@
         wcfg  TCFG, R0
 .endif
 .endif
+.if TS
+.entry boot
+.else
 .entry rx
+.endif
 
 .code
 .org ORG
@@ -128,6 +135,9 @@ ferr:   evt   #1
 lost:   ovclr
         evt   #63                       ; after the byte it was found at
         jmp   stop
+.endif
+.if TS
+boot:   tsync                           ; both engines start their timers in the same RUN (one slot gap apart)
 .endif
 .if TS == 1
 rx:     @fall p0 : mov R0, T            ; start edge: capture

@@ -192,3 +192,12 @@ def test_host_stall_lost():
 
 def test_words():
     assert len(prog("i2c_mon").words) == 39
+
+
+def test_stretch_detected_1mhz():
+    st = {("addr", 8, "data"): 400, ("wr", 8, "ack"): 600}
+    c, ctrl, mon, hist = session(W, stretch=st, slot=1, thigh=13, tlow=25, RATE=1000000)
+    s = stream(c)
+    assert plain(s) == expect(mon)
+    got = [x[1] * STEP for x in s if isinstance(x, tuple)]
+    assert len(got) == 2 and abs(got[0] - 400) <= 3 * STEP + 25 and abs(got[1] - 600) <= 3 * STEP + 25, got

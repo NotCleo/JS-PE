@@ -7,7 +7,7 @@ from test_first import Seq
 
 E_MOSI, E_MISO = 0, 1
 EV = 0x100
-CSH, CSH_SLOW, TS_SETUP, TS_CSH, TS_T = 25, 40, 160, 240, 28      # spi_mon.s header rules (TS_CSH: CS high with TS)
+CSH, CSH_SLOW, TS_SETUP, TS_CSH, TS_T, TS_HOLD = 25, 40, 240, 280, 28, 32    # spi_mon.s header rules (TS_*: with TS)
 
 
 def bus(T, mode, frames, t0=60.0, gap=40.0, phase=0.0, **kw):
@@ -167,12 +167,12 @@ def test_overrun_reported_in_band():
 
 def ts_frames(c, e, tsp=0xFFFF, tsw=41):
     # host rule (spi_mon.s): wraps counted up to the timestamp's hi byte, one fewer for T < TSW;
-    # time = wraps * (TSP + 1) + TSP - T. evt 61 before a CS-rise TS: if that end precedes the frame's start,
-    # the CS rise cut a wrap handler: one wrap more from here on. A TS cut short by the next event is missing.
-    out, wraps, pend, cut, start = [], 0, None, False, None
+    # time = wraps * (TSP + 1) + TSP - T. evt 61 before a CS-rise TS with no evt 62 since the later of the frame's
+    # start TS and its last data byte (or an end before the start): the CS rise cut that wrap call, one wrap more.
+    out, wraps, pend, cut, seen, start = [], 0, None, False, True, None
     for _, v in c.host_out[e]:
         if v == EV | 62:
-            wraps += 1
+            wraps, seen = wraps + 1, True
         elif v == EV | 61:
             cut = True
         elif v & EV:
@@ -182,11 +182,14 @@ def ts_frames(c, e, tsp=0xFFFF, tsw=41):
             if len(pend) == 3:
                 t = pend[1] | pend[2] << 8
                 tt = (wraps - (t < tsw)) * (tsp + 1) + tsp - t
-                if pend[0] == 2 and cut and start is not None and tt < start:
+                if pend[0] == 2 and cut and (not seen or (start is not None and tt < start)):
                     wraps, tt = wraps + 1, tt + tsp + 1
-                start = tt if pend[0] == 1 else start
+                if pend[0] == 1:
+                    start, seen = tt, False
                 out.append((pend[0], tt))
                 pend, cut = None, False
+        else:
+            seen = False                                        # a data byte
     return out, wraps
 
 
@@ -252,7 +255,7 @@ def test_timestamps_every_wrap_offset(slot, tsp=511):
     c = start(slot, TS=1, TSP=tsp)
     xs, ys, t = [], [], c.cycle + 100.0
     for i in range(180):
-        x, y = bus(TS_T, 0, [([i & 0xFF], [~i & 0xFF])], t0=t, cs_setup=TS_SETUP + (i * 3) % 37, cs_hold=1)
+        x, y = bus(TS_T, 0, [([i & 0xFF], [~i & 0xFF])], t0=t, cs_setup=TS_SETUP + (i * 3) % 37, cs_hold=TS_HOLD)
         xs += x
         ys += y
         t = x[0].cs_hi + TS_CSH + (i % 2) * 0.5
@@ -271,5 +274,42 @@ def test_timestamps_every_wrap_offset(slot, tsp=511):
     no_drive(c)
 
 
+@pytest.mark.parametrize("tsp", [611, pytest.param(997, marks=pytest.mark.slow)])
+def test_timestamps_with_other_traffic(tsp):
+    # SCK toggling while CS is high (another target), wraps often (TSP): a wrap call when CS falls keeps those edges
+    # latched; the @tock wait after the timestamp drops them (reviewer case: frame 34 at TSP 611)
+    fr = [([0xA5, 0x3C], [0x11, 0x22])] * 60
+    for slot in (1, 3):
+        c = start(slot, TS=1, TSP=tsp)
+        xs, ys = bus(TS_T, 0, fr, t0=c.cycle + 40, gap=TS_CSH, cs_setup=TS_SETUP, cs_hold=TS_HOLD)
+        noise = [(x.cs_hi + 0.5, y.cs_lo - 0.5) for x, y in zip(xs, xs[1:])]
+        run(c, xs, ys, noise=noise, tail=400)
+        for e in (E_MOSI, E_MISO):
+            assert stream(c, e, True) == expect(xs, ys)[e], slot
+
+
+def test_timestamps_frames_near_one_wrap():
+    # frames lasting 0.75 .. 0.99 wraps at every phase (TSP 1023): the evt 61 repair must hold when a frame starts
+    # just after a wrap and its CS rise cuts the next wrap call (reviewer case)
+    tsp = 1023
+    for slot in range(4):
+        c = start(slot, TS=1, TSP=tsp)
+        xs, ys, t = [], [], c.cycle + 100.0
+        for i in range(70):
+            x, y = bus(TS_T, 0, [([i & 0xFF, 0x5A, 0xC3], [~i & 0xFF, 1, 2])], t0=t,
+                       cs_setup=TS_SETUP + (i * 7) % 90, cs_hold=TS_HOLD + (i * 5) % 60)
+            xs += x
+            ys += y
+            t = x[0].cs_hi + TS_CSH + (i * 11) % 97
+        run(c, xs, ys, tail=400)
+        for e in (E_MOSI, E_MISO):
+            ev, w = ts_frames(c, e, tsp)
+            real = sorted([(1, x.cs_lo) for x in xs] + [(2, x.cs_hi) for x in xs], key=lambda r: r[1])
+            for kind in (1, 2):
+                off = [tt - r for (k, tt), (_, r) in zip(ev, real) if k == kind]
+                assert max(off) - min(off) <= 24, (slot, kind, min(off), max(off))
+            assert stream(c, e, True) == expect(xs, ys)[e]
+
+
 def test_default_has_no_timestamp_words():
-    assert len(prog("spi_mon").words) == 14 and len(prog("spi_mon", TS=1).words) == 40
+    assert len(prog("spi_mon").words) == 14 and len(prog("spi_mon", TS=1).words) == 48

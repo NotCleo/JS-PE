@@ -1,6 +1,6 @@
 ; spi_mon.s - passive SPI monitor: MOSI on one engine, MISO on another, one shared code copy (monitor_design.md)
-; words: 14 (TS = 1: 40) | clk/bit: external | engines: 2
-; max SCK: 12.5 MHz in simulation (ISS now; RTL lockstep in monitor step 4): sampling edges >= 4 clk apart (ISS passes
+; words: 14 (TS = 1: 48) | clk/bit: external | engines: 2
+; max SCK: 12.5 MHz in simulation (ISS, and RTL == ISS in test/test_monitor.py): sampling edges >= 4 clk apart (ISS passes
 ;        at 2). Bench figure until measured on hardware: <= 8 MHz. TS = 1: data held >= 14 clk after each sampling
 ;        edge (1.78 MHz at 50 % duty)
 ; pads: SCK and data pass the same 2-FF synchronizer; the data bit is the synchronized level in the clock the SCK edge
@@ -21,13 +21,17 @@
 ;       missing (CS edge inside the rule's minimum). Host: time = W * (TSP + 1) + TSP - T, W = evt 62 count before
 ;       the hi byte, minus 1 if T < TSW (captured just before a wrap: the program waits for its evt 62 first).
 ;       evt 61 before a CS-rise TS: that CS rise came <= 32 clk after a wrap and may have cut the wrap call
-;       (watcher 0 wins, ISA 6): if the frame's end time precedes its start, add one wrap from there on; frames longer
-;       than one wrap (1.31 ms at TSPRE 0, 21 ms at 1) cannot be repaired and the host marks them +-1 wrap. A TS is up
-;       to 24 clk late near a wrap (wrap call or window wait between the edge and the capture)
-;       evt 62 dropped at a full FIFO is part of a loss: after evt 63 the host restarts its time base.
+;       (watcher 0 wins, ISA 6): if no evt 62 arrived since the later of the frame's start TS and its last data byte,
+;       or the end precedes the start, add one wrap from there on. Not repaired: a frame whose SCK pauses longer than
+;       one wrap and whose CS rise cuts the wrap call. A TS is up to 24 clk late near a wrap (wrap call or window wait
+;       between the edge and the capture). Both engines start their timers with the shared entry instruction (boot)
+;       in the same RUN: their times differ by the slot gap (<= 3 clk). evt 62 dropped at a full FIFO is part of a
+;       loss: after evt 63 the host starts a new time epoch (host/monitor.py).
 ; rule: CS high >= 25 clk (500 ns) after a frame of whole bytes, >= 40 clk (800 ns) after a partial byte or a loss.
-;       TS = 1: CS high >= 240 clk (4.8 us), first sampling edge >= 160 clk (3.2 us) after CS falls (capture + wrap
-;       window wait); the ISS offset sweep fails at 190 / 80 (sw/tests/test_spi_mon.py).
+;       TS = 1: CS high >= 280 clk (5.6 us), first sampling edge >= 240 clk (4.8 us) after CS falls (capture, wrap
+;       window wait, then a @tock wait TSK steps long that gives the waiting clock), CS rise >= 32 clk after the last
+;       sampling edge (a wrap call there must not hold the last edge past the abort, and a near-wrap evt 62 then comes
+;       after the last data byte). ISS sweeps with other traffic on SCK while CS is high: setup 200 or CS high 200 fail.
 ;       In the rule the CS-fall guard waits >= 1 clk, which drops SCK edges latched while CS was high (another
 ;       target's traffic, D055). Outside it a frame may lose its first bits: reported LOST when two SCK edges merge,
 ;       but a single late-answered edge samples late and can flip that bit unreported (D055 rule, as spi_tgt).
@@ -44,6 +48,7 @@
 .equ TSW,      (40 + TSTEP - 1) / TSTEP + 1  ; TS: capture with T < TSW (<= 40 clk before a wrap): waits for that wrap;
                                 ;     the host counts it one wrap fewer
 .equ TSH,      (32 + TSTEP - 1) / TSTEP + 1  ; TS: capture < 32 clk after a wrap: waits until its evt 62 is out
+.equ TSK,      (56 + TSTEP - 1) / TSTEP + 1  ; TS: the drop-stale-edges tock comes TSK steps after its T read
 .equ ENG_MOSI, 0                ; engines and load address: override with -D
 .equ ENG_MISO, 1
 .equ ORG,      112
@@ -75,12 +80,15 @@
         li    R0, #wrap
         wcfg  WV1, R0
         li    R2, #0xFFFF - TSP + TSH   ; R2 + T carries for T > TSP - TSH (just after a wrap)
-        tsync
         watch #3
 .else
         watch #1
 .endif
+.if TS
+.entry boot
+.else
 .entry idle
+.endif
 
 .engine ENG_MISO
 .init
@@ -104,15 +112,21 @@
         li    R0, #wrap
         wcfg  WV1, R0
         li    R2, #0xFFFF - TSP + TSH   ; R2 + T carries for T > TSP - TSH (just after a wrap)
-        tsync
         watch #3
 .else
         watch #1
 .endif
+.if TS
+.entry boot
+.else
 .entry idle
+.endif
 
 .code
 .org ORG
+.if TS
+boot:   tsync                           ; both engines start their timers in the same RUN (one slot gap apart)
+.endif
 idle:   @fall p1 : evt #1               ; CS low
 .if TS
         mov   R0, T                     ; capture
@@ -125,6 +139,13 @@ tq1:    mov   R1, T
         jmp   tw1
 tp1:    push  R0
         pushh R0
+        mov   R1, T                     ; one waiting clock after CS fell: a wrap call there keeps the SCK edges
+        add   R1, #-TSK                 ;   latched while CS was high, the @tock wait drops them (D055)
+        jc    tk                        ; CY = T >= TSK
+        sub   R1, R2
+        add   R1, #TSH                  ; modulo TSP + 1
+tk:     mov   C, R1
+        @tock : nop
 .endif
 byte:   loop { @rise p0 : shin }        ; bytes pushed at wend; ends only at a full FIFO
         pull  R1                        ; FIFO full: OVR via the empty RX FIFO (the host never sends to a monitor);

@@ -188,7 +188,7 @@ def test_real_wraps_long_idle():
 
 
 def test_words():
-    assert [len(prog("uart_mon", TS=t).words) for t in (0, 1, 2)] == [12, 30, 49]
+    assert [len(prog("uart_mon", TS=t).words) for t in (0, 1, 2)] == [12, 31, 50]
 
 
 def stream0(c, e):
