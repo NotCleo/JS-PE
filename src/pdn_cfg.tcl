@@ -1,4 +1,4 @@
-# LibreLane 3.1.0.dev4 scripts/openroad/common/pdn_cfg.tcl (Apache-2.0) with Cleo's SRAM supply straps (D058, D060, D128, D129):
+# LibreLane 3.1.0.dev4 scripts/openroad/common/pdn_cfg.tcl (Apache-2.0) with Cleo's SRAM supply straps (D058, D060, D128, D129, D130):
 # no default macro grid; Metal4 straps over every macro supply column are added after pdngen.
 # Copyright 2025 LibreLane Contributors
 #
@@ -253,6 +253,37 @@ if { $::env(PDN_CORE_RING) == 1 } {
     }
 }
 
+# D130: TT precheck needs every power pin within 10 um of the bottom edge, and Magic's LEF keeps one label per stripe,
+# so the core strap's pin box is replaced by one box covering pin + strap (pdngen's pin is rebuilt; dbBox has no setter).
+proc jspe_pin_extend {net layer x1 y1 x2 y2} {
+    foreach bterm [$net getBTerms] {
+        foreach bpin [$bterm getBPins] {
+            set boxes {}
+            set hit 0
+            foreach box [$bpin getBoxes] {
+                set l [$box getTechLayer]
+                set r [list $l [$box xMin] [$box yMin] [$box xMax] [$box yMax]]
+                if { !$hit && $l == $layer && [$box xMin] == $x1 && [$box xMax] == $x2 && [$box yMin] <= $y2 && [$box yMax] >= $y1 } {
+                    set r [list $l $x1 [expr {min($y1, [$box yMin])}] $x2 [expr {max($y2, [$box yMax])}]]
+                    set hit 1
+                }
+                lappend boxes $r
+            }
+            if { !$hit } { continue }
+            set status [$bpin getPlacementStatus]
+            odb::dbBPin_destroy $bpin
+            set nbpin [odb::dbBPin_create $bterm]
+            $nbpin setPlacementStatus $status
+            foreach r $boxes {
+                lassign $r l a b c d
+                odb::dbBox_create $nbpin $l $a $b $c $d
+            }
+            return 1
+        }
+    }
+    return 0
+}
+
 # D128: pdngen keeps core straps clear of a macro's own supply pins, so it cannot join Metal4 straps to Metal4 macro pins.
 # After pdngen, one Metal4 special wire per supply column runs from the macro edge into the core strap that ends at the halo.
 proc jspe_macro_straps {} {
@@ -300,7 +331,11 @@ proc jspe_macro_straps {} {
             }
             set swire [odb::dbSWire_create $net "ROUTED"]
             odb::dbSBox_create $swire $layer $x1 $y1 $x2 $y2 "STRIPE"
-            puts "\[INFO\] Cleo: $net_name strap over [$inst getName] column x = $x_um, y [expr {$y1 / double($dbu)}]-[expr {$y2 / double($dbu)}], joins $joined"
+            set pinned [jspe_pin_extend $net $layer $x1 $y1 $x2 $y2]
+            if { !$pinned } {
+                puts "\[WARNING\] Cleo: no power pin on the core strap over [$inst getName] column x = $x_um ($net_name)"
+            }
+            puts "\[INFO\] Cleo: $net_name strap over [$inst getName] column x = $x_um, y [expr {$y1 / double($dbu)}]-[expr {$y2 / double($dbu)}], joins $joined, pin $pinned"
         }
     }
 }
