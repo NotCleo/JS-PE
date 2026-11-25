@@ -905,3 +905,36 @@ def usb_crc_preset(pid):
         t = s ^ (0xA001 if fb else 0)
         s = (t << 1 | (fb ^ (word >> i & 1))) & 0xFFFF
     return s
+
+
+class UsbEdges:
+    # receiver view of slow D+/D- edges: a rising edge crosses the threshold U[rise] clk late, a falling edge U[fall]
+    # (per edge). Rises later than falls: every J<->K transition shows crossover SE0 of rise - fall; the reverse: SE1
+    def __init__(self, rng, rise, fall):
+        self.rng, self.rise, self.fall = rng, rise, fall
+        self.w = self.s = None
+        self.q = [[], []]
+        self.se0, self.xmax = 0, 0                 # current SE0 run, longest SE0 run shorter than 1 bit
+
+    def __call__(self, t, st):
+        if self.w is None:
+            self.w, self.s = list(st), list(st)
+        ch = [i for i in (0, 1) if st[i] != self.w[i]]
+        if ch:
+            for i in ch:
+                tt = t + self.rng.randint(*(self.rise if st[i] else self.fall))
+                if self.q[i]:
+                    tt = max(tt, self.q[i][-1][0] + 1)
+                self.q[i].append((tt, st[i]))
+                self.w[i] = st[i]
+        for i in (0, 1):
+            while self.q[i] and self.q[i][0][0] <= t:
+                self.s[i] = self.q[i].pop(0)[1]
+        v = (self.s[0], self.s[1])
+        if v == USB_SE0:
+            self.se0 += 1
+        else:
+            if 0 < self.se0 < 32:
+                self.xmax = max(self.xmax, self.se0)
+            self.se0 = 0
+        return v

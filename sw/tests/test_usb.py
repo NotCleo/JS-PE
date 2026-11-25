@@ -8,8 +8,15 @@ BIT = 32
 ADDR = 5
 
 
-def setup(own=1, addr=ADDR, bit=BIT, phase=0, pidchk=0):
-    img = prog("usb_ls", OWNCHK=own, PIDCHK=pidchk)
+def usb_build(own=1, pidchk=0):
+    # own 2 or (own 1, pidchk 1): the 512-word build (OWNCHK, PIDCHK, EOPCHK, TXJK); else the 128-word build
+    if own == 2 or (own and pidchk):
+        return dict(MEMWORDS=512)
+    return dict(OWNCHK=own, PIDCHK=1, EOPCHK=0) if pidchk else dict(OWNCHK=own)      # 126 / 128 / 121 words
+
+
+def setup(own=1, addr=ADDR, bit=BIT, phase=0, pidchk=0, **defs):
+    img = prog("usb_ls", **{**usb_build(own, pidchk), **defs})
     c = boot(img, phase)
     k = img.label("keys")
     c.mem[k], c.mem[k + 1], c.mem[k + 2] = usb_key(addr, 0), 0, usb_key(addr, 1)
@@ -26,7 +33,7 @@ def bus(c, host, t, clash):
     return s if s is not None else USB_J
 
 
-def run(c, host, n, link_b=None):
+def run(c, host, n, link_b=None, view=None):
     # link_b: model the chip->host link at bit time B clk (10 B per data byte, 20 B per event, +2 bytes at start)
     log, clash, occ = [None] * c.cycle, [], 0                  # log index = cycle
     c.oelog = [0] * c.cycle
@@ -38,7 +45,8 @@ def run(c, host, n, link_b=None):
         c.oelog.append(c.uio_oe)
         if link_b:
             c.tx_block[ERX] = t < free
-        c.step(0x08, st[0] << 4 | st[1] << 5)
+        vs = view(t, st) if view else st                       # what the chip's input pads see
+        c.step(0x08, vs[0] << 4 | vs[1] << 5)
         occ = max(occ, 4 - c.tx[ERX].free())
         if link_b and len(c.host_out[ERX]) > seen:
             v = c.host_out[ERX][-1][1]
@@ -57,20 +65,20 @@ def chip_packets(log, host):
     return [p for p in usb_decode(log, BIT, t0) if host.state(p[0]) is None]
 
 
-def transaction(c, host, tok, data=None, gap=4, after=40, link_b=None):
+def transaction(c, host, tok, data=None, gap=4, after=40, link_b=None, view=None):
     host.packet(tok, t=max(host.t, c.cycle) + 20 * BIT)
     if data is not None:
         host.idle(gap)
         host.packet(data)
     host.idle(after)
-    return run(c, host, int(host.t) - c.cycle, link_b)
+    return run(c, host, int(host.t) - c.cycle, link_b, view)
 
 
 PAY = [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00]          # GET_DESCRIPTOR(device)
 
 
 @pytest.mark.parametrize("phase", range(4))
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 @pytest.mark.parametrize("tok,pid", [("SETUP", "DATA0"), ("OUT", "DATA0"), ("OUT", "DATA1")])
 def test_usb_rx_setup_out(own, tok, pid, phase):
     c, host, _ = setup(own, phase=phase)
@@ -84,7 +92,7 @@ def test_usb_rx_setup_out(own, tok, pid, phase):
     assert c.eng[ERX].ovr == 0
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 @pytest.mark.parametrize("addr,ep", [(ADDR + 1, 0), (0, 0), (ADDR, 2), (ADDR, 1)])
 def test_usb_rx_not_ours_ignored(own, addr, ep):
     # wrong address or endpoint (EP1 has no OUT): no bytes, no handshake
@@ -93,7 +101,7 @@ def test_usb_rx_not_ours_ignored(own, addr, ep):
     assert stream(c) == [] and chip_packets(log, host) == [] and not clash
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_rx_keepalive_ignored(own):
     c, host, _ = setup(own)
     for _ in range(3):
@@ -107,7 +115,7 @@ def test_usb_rx_keepalive_ignored(own):
 STUFFY = [[0xF9], [0xFF] * 8, [0x7F, 0xFE, 0x3F, 0xFC, 0xFF, 0x01, 0xFF, 0x80], [0xFE, 0xFF, 0xFF, 0x7F]]
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 @pytest.mark.parametrize("pay", STUFFY)
 @pytest.mark.parametrize("drift", [0.0, -0.015, 0.015])
 def test_usb_rx_stuffing(own, pay, drift):
@@ -118,7 +126,7 @@ def test_usb_rx_stuffing(own, pay, drift):
     assert [p[2] for p in chip_packets(log, host)] == [[USB_PID["ACK"]]]
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_rx_bad_crc(own):
     c, host, _ = setup(own)
     pkt = usb_data("DATA0", PAY, bad_crc=True)
@@ -126,7 +134,7 @@ def test_usb_rx_bad_crc(own):
     assert stream(c) == pkt + [USB_PID["SETUP"], 0x102] and chip_packets(log, host) == []
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_rx_fifo_drain_b16(own):
     # worst case: 8-byte payload of 0x00 (no stuffing: fastest bytes), link B = 16, host reads continuously
     c, host, _ = setup(own)
@@ -136,7 +144,7 @@ def test_usb_rx_fifo_drain_b16(own):
     assert occ <= 3, occ
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 @pytest.mark.parametrize("addr,ep", [(ADDR, 0), (ADDR, 1), (ADDR + 1, 1)])
 def test_usb_rx_in_unarmed(own, addr, ep):
     # IN while nothing is armed: NAK for our endpoints; another address: silence (OWNCHK 1) or NAK (OWNCHK 0)
@@ -147,7 +155,7 @@ def test_usb_rx_in_unarmed(own, addr, ep):
     assert resp == ([[USB_PID["NAK"]]] if ours or not own else []) and stream(c) == [] and not clash
 
 
-VARIANTS = [(1, 0), (0, 0), (0, 1)]                                   # (OWNCHK, PIDCHK)
+VARIANTS = [(1, 0), (0, 0), (0, 1), (1, 1)]                           # (OWNCHK, PIDCHK); (1, 1) = 512 words
 
 
 @pytest.mark.parametrize("own,pc", VARIANTS)

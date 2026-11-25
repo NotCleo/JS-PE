@@ -6,27 +6,27 @@ Scope: USB 2.0 LS device; demo = HID keyboard (EP0 + EP1 interrupt IN). Pmod: RO
 - Pads: uio4 = D+ ← E0.p0; uio5 = D− ← E0.p1 with pad `inv`; uio6 = pull-up ← E0.p2 (`p2 <- 1` in `.init` = attach; detach = host clears PAD `en`).
 - One E instruction per state (A on p0, B on p1): **J** (LS idle: D+ 0, D− 1) `p0 <- 0, p1 <- 0`; **K** `p0 <- 1, p1 <- 1`; **SE0** `p0 <- 0, p1 <- 1`. Both pads change in the same clock.
 - Release: `p0 <- z`, then `p1 <- z` (B has no `z`); both lines are at J levels, so the skew is harmless.
-- E_RX binds: p0 = uio_in[4] (D+, shift input), p1 = uio_in[5] (D−), p2 = G_TXB. E_TX binds p3 = uio_in[4] (line state). `.filter uio4, uio5` rejects SE0 pulses < 62.5 ns only; USB allows crossover SE0 up to 210 ns at LS (TLST), so a slow, low crossover could fire the EOP watcher mid-packet. **Hardware check item**; fallback: a USB transceiver with SE0 filtering on the Pmod (0 words; a chip-side delayed check costs ≥ 5 words).
+- E_RX binds: p0 = uio_in[4] (D+, shift input), p1 = uio_in[5] (D−), p2 = G_TXB. E_TX binds p3 = uio_in[4] (line state). `.filter uio4, uio5` filters each line separately, so it does not remove crossover SE0 (each line has one clean edge, only skewed); USB allows crossover SE0 up to 210 ns at LS (TLST). The program confirms SE0 before an EOP counts (`EOPCHK`, §12). Fallback for worse edges: a USB transceiver on the Pmod.
 
 ## 2. Bit timing
 - `CLK_HZ` 48 MHz (D126), BIT = 32 clk, P = 31, frac 0.
-- E_RX: timer hard sync on both edges of p0 (TCFG `sedge` 3, `spin` p0): every NRZI transition re-times the grid. Tock at mid-bit, 16 clk after the synchronized edge.
-- Drift: ≤ 7 bits between transitions (stuffing); host and device ±1.5 % each: 7 × 32 × 0.03 = 6.7 clk + ≤ 3 clk edge jitter vs a 16-clk half bit.
+- E_RX: timer hard sync on both edges of p0 (TCFG `sedge` 3, `spin` p0): every NRZI transition re-times the grid. Tock `SAMPLE` = 13 clk after the synchronized edge (§12: margin both for late edges and for an early EOP).
+- Drift: ≤ 7 bits between transitions (stuffing); host and device ±1.5 % each: 7 × 32 × 0.03 = 6.7 clk + ≤ 3 clk edge jitter vs the 19 clk left after the sample point.
 - E_TX: own periodic grid, `tsync` per packet, no auto-sync; the next bit is decided between ticks (no tock).
 
 ## 3. RX path (E_RX)
 - SHCFG: WL 8, LSB first, `diff` + `inv` (NRZI: no transition = 1). TAPCFG `rl` 6, `r1` 1, `lfen`. WL never changes inside a packet (an SHCFG write zeroes RUN).
 - Hunt: `smp` (LV = idle level), `wrst`, `@rise p0` (first K), `loop { @tock : shin }`, `cmp S, #0x80` = SYNC.
-- Byte routine: `@tock : shin`; `jrun` → `@tock : smp` drops the stuff bit; `jw` loop. *(s2)* No stuff-error check: the CRC or the key compare catches it.
-- After the PID byte: `wcfg LFSR_LO` ← 0xFFFF, so every packet's LFSR covers exactly the bytes after its PID.
+- Byte loop, inline (no `call`: the link register belongs to the call-mode EOP watcher): `@tock : shin`; `jw` next bit; at a byte end `push S` if DATA is expected, two instructions after the last `shin`, before an early EOP; then the PID step; `jrun` → `@tock : smp` drops the stuff bit. *(s2)* No stuff-error check: the CRC or the key compare catches it.
+- After the PID byte: `wcfg LFSR_LO` ← 0xFFFF, so every packet's LFSR covers exactly the bytes after its PID. The ACK test at EOP reads S (last byte), because a 1-byte packet can end before its PID reaches R1; a token's b2 to EP0/EP1 has bits 2:0 = 0, never 0xD2.
 - *(s2)* Token check = **key**: LFSR_LO after b1, b2 (CRC5 included), one 16-bit compare at EOP with KEY0 / KEY1, which the RP2350 computes per address. An exact PID compare also checks ~PID.
 - DATA (only while R2 holds a matched SETUP/OUT PID): bytes pushed unguarded; residual 0xB001 = good.
-- EOP: watcher 0 (CC0 = ~p0 & ~p1, abort) → `eop`, which dispatches on R1 (PID) and R2 (0 / token PID / 2 = expect ACK).
+- EOP: watcher 0 (CC0 = ~p0 & ~p1; call mode with `EOPCHK`, else abort) → `eop`: SE0 confirm (§12), then dispatch on R1 (PID), S and R2 (0 / token PID / 2 = expect ACK).
 - Stream per data packet: [DATA PID, payload, CRC lo, CRC hi, token PID], then EV_OK (1) or EV_CRC (2); EV_INACK (3).
 
 ## 4. TX path (E_TX) and turnaround
 - SHCFG WL 16, LSB first; TAPCFG `rl` 6, `r1` 1, `alt` 2, `lfen`. A handshake is one word: SYNC | PID << 8 (ACK 0xD280, NAK 0x5A80).
-- Per bit: `p3 <- out` (bit → B, RUN, LFSR); `jb` hold; else `jhi p3` picks `@tick` J or K; after the tick `jrun` → `p3 <- q` (stuff 0) + forced transition. Static bound tick → next tick guard ≤ 29 clk of 32. The J/K choice reads D+ back (`jhi p3`) ~16 clk after the last drive: tested with the chip's view of the line delayed up to 12 clk (250 ns) beyond pad + synchronizer + filter; LS edges cross mid-swing within ~150 ns.
+- Per bit: `p3 <- out` (bit → B, RUN, LFSR); `jb` hold; else the J/K choice; after the tick `jrun` → `p3 <- q` (stuff 0) + forced transition. Static bound tick → next tick guard ≤ 29 clk of 32. J/K choice (§12): `TXJK` 1 keeps the line state in E_TX's C register (`xor C, R2`, cleared per packet; E_TX uses no tock); `TXJK` 0 reads D+ back with `@tock : jhi p3` TOCK = 6 clk before the drive tick (`.deadline` proves the drive is armed in time).
 - DATA *(s2)*: IN buffer [total bits 32 + 8n, CRC preset, SYNC | PID, data]; the preset (one constant per DATA0/DATA1, written by the RP2350) makes the LFSR 0xFFFF after word 0, because that boundary has no free clock. At R1 = 16: S ← LFSR ^ 0xFFFF (CRC16, also mid-word for odd n). EOP: `@tick` SE0, SE0, J, release.
 - *(s2)* STALL = a buffer of 16 bits [16, –, SYNC | STALL]: no flag needed.
 - Turnaround: E_RX waits for the SE0→J edge (`@rise p1`, latched if early), then `sset` G_ACK, G_NAK or G_DAT. E_TX (`@c0` = G_ACK | G_NAK, watcher 1 on G_DAT) clears all three, `sset` G_TXB, `tsync`, first K on the second tick: ≈ 3 bits (handshake) to 3.7 bits (DATA) after EOP. Window 2–6.5 bits (detachable cable; host timeout 16).
@@ -46,8 +46,10 @@ Right form, POLY 0xA001, LFSR_HI 0, set in `.init`; both engines set `lfen`. Hal
 | E_TX: IN start / handshake + idle / start / bit loop + CRC / EOP | 36 | 6 / 6 / 8 / 21 / 5 = **46** |
 | Buffer + keys | 11 | 10 |
 | Total | 109 | **127 / 128**; `-D OWNCHK=0`: **120** |
+| Step 6: inline byte loop, `ecrc` before `hunt` | | −2 → 125 (`EOPCHK` 0, `TXJK` 0) |
+| Builds (§12) | | 128 words: **128** (`EOPCHK` 1 +3); 512 words: **142** (`PIDCHK` +8, `EOPCHK` 3 +7, `TXJK` +2) |
 
-Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7; it also NAKs INs for other LS devices behind the same hub, which collides there). Options: `-D OWNCHK=0 -D PIDCHK=1` = 128 words with exact SETUP/OUT and DATA PID checks (+8). SRAM build: OWNCHK 1 + PIDCHK 1, two buffers.
+Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7; it also NAKs INs for other LS devices behind the same hub, which collides there). Options in 128 words: `-D OWNCHK=0 -D PIDCHK=1 -D EOPCHK=0` = 126 (PID checks, no SE0 confirm); `-D TXJK=1 -D EOPCHK=0` = 127. The 512-word build is chosen with `-D MEMWORDS=512 --mem 512` (§12).
 
 ## 8. Possibly RTL (flag only)
 1. No toggle in action A, no `z` in B: NRZI TX needs the per-bit branch (21 words).
@@ -74,3 +76,19 @@ All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound v
 - Fix (0 words): the image now holds the address-0 keys (0x7C00, 0x0860) and E_RX presets LFSR_LO = 0xFFFF in `.init`; before, the first EOP after boot matched KEY0 = 0 against LFSR 0 and armed a phantom data packet.
 - RP2350 rules added: (a) attribute EV_INACK to what was armed, in stream order; (b) on any SETUP/OUT data event write BUFKEY 0 first and wait until it has landed (UART backlog + 2 bytes) before re-arming, because an arm WRMEM in flight can land after the chip's disarm; an EV_INACK inside that window belongs to the stale arm; (c) PIDCHK 0: a data event whose closing token byte is not SETUP/OUT means a corrupted token disarmed the buffer: re-arm it; (d) PIDCHK 0: a DATA PID other than C3/4B was ACKed by the chip; for SETUP, STALL the data/status stage so the host retries the request; OUT data is lost (limitation; PIDCHK 1 removes it).
 - A bus reset in the middle of a SETUP/OUT closes the pending data packet as EV_CRC (no bytes); the next SETUP works at once (tested).
+
+## 12. Builds and slow edges (step 6)
+`MEMWORDS` (128 default, `-D MEMWORDS=512 --mem 512`) sets the defaults; each is overridable with `-D`. BUF = 118 or 246 (one-word `li`; 246 also makes a 512 build fail at `--mem 128`).
+
+| Option | 128 words (128) | 512 words (142) | Words |
+|---|---|---|---|
+| `OWNCHK` NAK only our address | 1 | 1 | +7 |
+| `PIDCHK` exact PIDs | 0: corrupted PID → RP2350 STALLs (§11 d) | 1 | +8 |
+| `EOPCHK` SE0 checks before EOP | 1: SE0 < 9–10 clk ignored | 3: SE0 < 21–22 clk (≥ 440 ns) ignored | +1 + 2n |
+| `TXJK` J/K state | 0: D+ read 6 clk before the drive | 1: register | +2 |
+
+- **EOP confirm.** Watcher 0 in call mode: `eop` delays with `ld R0, [R0]` and tests SE0 with `jnc0` (neither changes flags); SE0 gone → `ret` re-executes the preempted wait (events kept), so a crossover costs nothing. The handler must not change Z/CY: a crossover between `cmp` and its jump would take the wrong branch (seen: LFSR re-preset by the PID path, EV_CRC). Assembler fix: mnemonics may contain digits (`jc0`, `jnc0` were rejected).
+- **Early EOP.** Real crossover SE0 means rises cross the threshold later than falls by the skew, so the D+ edge E_RX syncs on can be late by the skew while the EOP's SE0 (a fall) is not: SE0 arrives BIT − SAMPLE − skew after the last sample. The last byte's `push` therefore follows its `shin` with no taken jump, and the ACK test reads S. With late falls (SE1) the next edge can come up to the skew after the sample point: SAMPLE 13 balances both.
+- **Measured (ISS, 4 phases, `test_usb_edges.py`).** Fixed skew: 512 words pass SE0 skew ≤ 10 clk (210 ns), SE1 ≤ 12; 128 words SE0 ≤ 8 clk (167 ns), SE1 ≤ 12. Random per-edge delays up to 14 clk (300 ns) with crossover SE0 0–10 clk (512) / 0–8 clk (128) or SE1 at every transition: SETUP, OUT, IN + ACK, keep-alive, NAK all correct. TX: chip's own pads seen 14 clk late, both builds plus `TXJK` 1 in 128 words: packets correct; `TXJK` 0 read-back passes up to 20 clk (417 ns) of delay.
+- **RTL lockstep** (`test/test_usb_ls.py`, `USB_DEFS` selects options): default build and `TXJK=1 EOPCHK=0` pass. It caught two reads of never-written datapath registers (X in RTL, 0 in the ISS): S at the first EOP (ACK test) and C (`xor C, C`); `.init` now writes both (0 words).
+- **128-word limit.** Crossover SE0 of 9–10 clk (188–210 ns) ends a packet (the host retries); the 512-word build covers the full 210 ns. `-D OWNCHK=0 -D EOPCHK=3 -D TXJK=1` = 127 words also covers it, at the cost of OWNCHK (§7).

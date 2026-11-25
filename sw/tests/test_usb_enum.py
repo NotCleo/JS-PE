@@ -2,12 +2,13 @@
 # Time is scaled (bus reset 1 500 clk, report interval 200 bits); protocol order and rules are the real ones.
 import pytest
 from harness import prog
+from test_usb import usb_build
 from jspe_iss import Chip, HostLink
 from usb_host import UsbHost, Rp2350, bus_state, DEV_DESC, CFG_DESC, REPORT_DESC, REPORTS, req
 
 
 def enumerate_iss(own=1, full=True, corrupt_req=9, max_clk=3_000_000):
-    img = prog("usb_ls", OWNCHK=own)
+    img = prog("usb_ls", **usb_build(own))
     c = Chip(direct=False)
     c.boot(img, phase=0)
     hl = HostLink(16)
@@ -36,7 +37,7 @@ def common(host, rp, corrupt_req):
     assert host.dups == 0 and not host.clash and rp.notes == [] and set(rp.ops) == {0x70}
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_enum_address(own):
     # bus reset, GET_DESCRIPTOR(device) at 0, SET_ADDRESS (corrupted once), GET_DESCRIPTOR(device) at 7
     c, host, rp = enumerate_iss(own, full=False, corrupt_req=5)
@@ -45,7 +46,7 @@ def test_usb_enum_address(own):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_enum_keyboard(own):
     # + configuration and HID report descriptors, SET_CONFIGURATION (corrupted once), 10 key reports
     c, host, rp = enumerate_iss(own)

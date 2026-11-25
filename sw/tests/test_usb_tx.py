@@ -34,8 +34,8 @@ def eop_ok(c, log, p):
     return 2 * BIT - 2 <= se0 <= 2 * BIT + 2 and BIT - 2 <= rel - p[1] <= BIT + 2
 
 
-def in_txn(c, host, ep, after=160):
-    return transaction(c, host, usb_token("IN", ADDR, ep), after=after)
+def in_txn(c, host, ep, after=160, view=None):
+    return transaction(c, host, usb_token("IN", ADDR, ep), after=after, view=view)
 
 
 DATAS = [("DATA1", []), ("DATA0", [0x05]), ("DATA0", [0xF9]), ("DATA1", list(range(1, 8))), ("DATA0", [0x12, 0x01, 0x10, 0x01, 0, 0, 0, 8]),
@@ -43,7 +43,7 @@ DATAS = [("DATA1", []), ("DATA0", [0x05]), ("DATA0", [0xF9]), ("DATA1", list(ran
 
 
 @pytest.mark.parametrize("phase", PHASES)
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 @pytest.mark.parametrize("pid,data", DATAS)
 def test_usb_tx_in_data_then_ack(own, phase, pid, data):
     c, host, img = setup(own, phase=phase)
@@ -59,7 +59,7 @@ def test_usb_tx_in_data_then_ack(own, phase, pid, data):
     assert [p[2] for p in chip_packets(log, host)] == [[USB_PID["NAK"]]]
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_tx_resend_until_ack(own):
     c, host, img = setup(own)
     arm(c, img, 0, "DATA1", PAY)
@@ -69,7 +69,7 @@ def test_usb_tx_resend_until_ack(own):
     assert stream(c) == [] and c.mem[img.label("keys") + 1] == usb_key(ADDR, 0)
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_tx_other_endpoint_nak(own):
     # buffer armed for EP1: an IN to EP0 gets NAK and leaves it armed
     c, host, img = setup(own)
@@ -80,7 +80,7 @@ def test_usb_tx_other_endpoint_nak(own):
 
 
 @pytest.mark.parametrize("phase", PHASES)
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_tx_stall(own, phase):
     c, host, img = setup(own, phase=phase)
     arm(c, img, 0, None, stall=True)
@@ -92,7 +92,7 @@ def test_usb_tx_stall(own, phase):
 
 
 @pytest.mark.parametrize("phase", PHASES)
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_tx_handshake_turnaround(own, phase):
     c, host, img = setup(own, phase=phase)
     log, clash, _ = transaction(c, host, usb_token("OUT", ADDR, 0), usb_data("DATA1", [2]))
@@ -105,7 +105,7 @@ def test_usb_tx_handshake_turnaround(own, phase):
     assert 2.0 <= gap_bits(nak[0], host) <= 6.5
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_tx_setup_disarms(own):
     # a new SETUP makes a stale IN buffer unusable: the chip disarms it, the next IN is NAKed
     c, host, img = setup(own)
@@ -116,7 +116,7 @@ def test_usb_tx_setup_disarms(own):
     assert [p[2] for p in chip_packets(log, host)] == [[USB_PID["NAK"]]]
 
 
-@pytest.mark.parametrize("own", [1, 0])
+@pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_bound_vs_iss(own):
     # every guarded instruction of both engines, 4 slot phases: measured arming delay <= assembler bound
     n, bad = 0, []
@@ -140,7 +140,7 @@ def test_usb_bound_vs_iss(own):
     assert n > 1000 and not bad, (n, bad[:8])
 
 
-@pytest.mark.parametrize("own,pc", [(1, 0), (0, 0), (0, 1)])
+@pytest.mark.parametrize("own,pc", [(1, 0), (0, 0), (0, 1), (1, 1)])
 def test_usb_tx_corrupted_in_pid(own, pc):
     # IN with PID 0x68 while EP0 is armed. PIDCHK 1: ignored, buffer kept. PIDCHK 0: the chip disarms and the
     # host's retried IN is taken as data (EV_CRC, closing byte 0x68, not SETUP/OUT): the RP2350 re-arms
@@ -162,7 +162,7 @@ def test_usb_tx_corrupted_in_pid(own, pc):
     assert [p[2] for p in chip_packets(log, host)] == [usb_data("DATA1", PAY)]
 
 
-@pytest.mark.parametrize("own,pc", [(1, 0), (0, 1)])
+@pytest.mark.parametrize("own,pc", [(1, 0), (0, 1), (1, 1)])
 def test_usb_tx_host_ack_after_2_bits(own, pc):
     # host ACK 2 bit times after the chip's DATA EOP (SE0 -> J): E_RX is hunting again in time
     c, host, img = setup(own, pidchk=pc)
@@ -182,24 +182,3 @@ def test_usb_tx_host_ack_after_2_bits(own, pc):
     host.packet([USB_PID["ACK"]], t=te + 2 * BIT)
     run(c, host, 40 * BIT)
     assert stream(c) == [0x103] and c.mem[img.label("keys") + 1] == 0
-
-
-@pytest.mark.parametrize("phase", PHASES)
-def test_usb_tx_slow_edges(phase):
-    # E_TX reads D+ back for its NRZI state: the line as seen by the chip delayed 10 clk (208 ns: a 300 ns LS edge
-    # crosses mid-swing after ~150 ns). Measured limit: 12 clk passes, 14 fails.
-    from models import usb_decode
-    from test_usb import bus
-    for data in ([0x00] * 8, [0xFF] * 8, [0xF9]):
-        c, host, img = setup(1, phase=phase)
-        arm(c, img, 0, "DATA1", data)
-        host.packet(usb_token("IN", ADDR, 0), t=c.cycle + 20 * BIT)
-        log = [None] * c.cycle
-        for _ in range(200 * BIT):
-            st = bus(c, host, c.cycle, [])
-            log.append(st)
-            seen = log[-11] if log[-11] is not None else st
-            c.step(0x08, seen[0] << 4 | seen[1] << 5)
-        t0 = next(k for k, v in enumerate(log) if v is not None)
-        r = [p for p in usb_decode(log, BIT, t0) if host.state(p[0]) is None]
-        assert [p[2] for p in r] == [usb_data("DATA1", data)] and r[0][3]

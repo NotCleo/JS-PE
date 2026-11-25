@@ -735,7 +735,7 @@ class Assembler:
         return encode("pin", **f)
 
     def encode_op(self, op, g):
-        m = re.match(r"([A-Za-z]+)\s*(.*)$", op)
+        m = re.match(r"([A-Za-z][A-Za-z0-9]*)\s*(.*)$", op)
         if not m:
             raise AsmError("syntax error")
         mn, rest = m.group(1).lower(), m.group(2).strip()

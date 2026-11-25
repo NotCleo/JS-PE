@@ -6,14 +6,23 @@
 ;   of (address, EP0 / EP1), BUFKEY = key of the armed endpoint (0 = disarmed; the chip writes 0 on IN-ACK and
 ;   on every SETUP/OUT to us). Key = LFSR_LO after shifting token bytes b1, b2 from 0xFFFF (CRC-16 right form).
 ; RX host stream: per SETUP/OUT data packet [DATA PID, payload, CRC lo, CRC hi, token PID] + EV_OK or EV_CRC;
-;   EV_INACK when the host ACKed the armed buffer. Bus reset: RP2350 polls PINS (SE0 >= 2.5 us).
+;   EV_INACK when the host ACKed the armed buffer. Bus reset: RP2350 reads uio4/uio5 on its GPIOs (SE0 >= 2.5 us).
 ; LIMITS: no stuff-error check (CRC / key compare catch it); a token key equal to 0, 0xFFFF or 0xB001 aliases.
+; builds: MEMWORDS 128 (flop memory, default) or -D MEMWORDS=512 --mem 512 (SRAM): the options below follow it.
+;   128: no PID check, SE0 < 9 clk ignored (crossover skew <= 8 clk, 167 ns; 512: <= 10 clk, 210 ns), D+ read back.
 
 .equ CLK_HZ, 48000000
 .equ BIT,    CLK_HZ / 1500000   ; 32 clk per bit
+.equ MEMWORDS, 128               ; program memory of the build: 128 or 512
 .equ OWNCHK, 1                  ; 1: NAK only INs to our address; 0: NAK every IN not armed (-7 words)
-.equ PIDCHK, 0                  ; 1: SETUP/OUT and DATA PIDs checked exactly (+8 words; fits with OWNCHK 0: 128)
-.assert (PIDCHK & OWNCHK) == 0, "PIDCHK 1 needs OWNCHK 0 (128 words)"
+.equ PIDCHK, MEMWORDS > 128     ; 1: SETUP/OUT and DATA PIDs checked exactly (+8 words)
+.equ EOPCHK, 1 + 2 * (MEMWORDS > 128)  ; SE0 checks before an EOP counts (+1 + 2 n words; the .filter is per line
+                                ;   and passes crossover SE0): 0 any SE0 ends the packet, 1 at 9-10 clk, 3 at 21-22 clk
+.equ TXJK,   MEMWORDS > 128     ; 1: E_TX keeps the J/K state in C (+2 words); 0: reads D+ back before each drive
+.equ SAMPLE, 13                 ; E_RX samples D+ SAMPLE clk after its last edge: edges may be up to ~SAMPLE late,
+                                ;   an early EOP (crossover skew) leaves BIT - SAMPLE - skew clk to push the last byte
+.equ TOCK,   6                  ; TXJK 0: D+ is read TOCK clk before the drive tick
+.assert (PIDCHK & OWNCHK) == 0 | MEMWORDS > 128, "PIDCHK 1 with OWNCHK 1 needs the 512-word build"
 .equ G_ACK,  0                  ; E_RX -> E_TX: send ACK
 .equ G_NAK,  1                  ; send NAK
 .equ G_DAT,  2                  ; send the IN buffer
@@ -22,8 +31,8 @@
 .equ EV_CRC, 2
 .equ EV_INACK, 3
 .equ ORG_TX, 0
-.equ ORG_RX, 46
-.equ BUF,    118
+.equ ORG_RX, 46 + 2 * TXJK
+.equ BUF,    118 + 128 * (MEMWORDS > 128)   ; < 256: one-word li; 246 catches MEMWORDS 512 with --mem 128
 .equ KEY0,   BUF + 7
 .equ BUFKEY, BUF + 8
 .equ KEY1,   BUF + 9
@@ -39,6 +48,8 @@
 .init
         li    R0, #BIT - 1
         mov   P, R0
+        li    R0, #TOCK * (TXJK == 0)   ; TXJK 0: tock TOCK clk before the tick; 1: line state J (C written before read)
+        mov   C, R0
         li    R0, #(16 + G_ACK) | ((16 + G_NAK) << 8)
         wcfg  BIND01, R0
         li    R0, #(16 + G_DAT) | (12 << 8)   ; p3 = D+ level (line state for NRZI)
@@ -70,6 +81,9 @@ tgo:    sclr  #G_ACK
         sclr  #G_NAK
         sclr  #G_DAT
         sset  #G_TXB
+.if TXJK
+        xor   C, C                      ; line is J
+.endif
         wrst
         tsync
         @tick : nop                     ; first K >= 2 bits after the host EOP
@@ -85,7 +99,14 @@ tnx:    jrun  tstf
         ld    S, [R0+1]!
 tbit:   p3 <- out                       ; next bit -> B, RUN, LFSR
         jb    thold
-tdrv:   jhi   p3, tj                    ; 0: transition
+.if TXJK
+tdrv:   xor   C, R2                     ; 0: transition
+        jz    tj
+.else
+tdrv:   @tock : jhi p3, tj              ; 0: transition; D+ read late (slow edges)
+        .deadline TOCK - 1
+        .deadline TOCK - 1, tj
+.endif
         @tick : p0 <- 1, p1 <- 1        ; K
         jmp   tnx
 tj:     @tick : p0 <- 0, p1 <- 0        ; J
@@ -111,8 +132,8 @@ tidle:  li    S, #0x80                  ; SYNC
 .init
         li    R0, #BIT - 1
         mov   P, R0
-        li    R0, #BIT / 2
-        mov   C, R0                     ; tock 16 clk after each edge: mid-bit
+        li    R0, #BIT - SAMPLE
+        mov   C, R0                     ; tock SAMPLE clk after each D+ edge
         li    R0, #0x0C00               ; TCFG: hard sync on both edges of p0
         wcfg  TCFG, R0
         li    R0, #12 | (13 << 8)       ; p0 = D+, p1 = D-
@@ -123,7 +144,7 @@ tidle:  li    S, #0x80                  ; SYNC
         wcfg  SHCFG, R0
         li    R0, #0x00E8               ; TAPCFG: LFSR step, run limit 6, ones only
         wcfg  TAPCFG, R0
-        li    R0, #0x1110               ; CC0: ~D+ & ~D- (SE0), abort
+        li    R0, #0x1110 + 0x1000 * (EOPCHK != 0)  ; CC0: ~D+ & ~D- (SE0), abort (EOPCHK: call)
         wcfg  CC0, R0
         li    R0, #eop
         wcfg  WV0, R0
@@ -137,10 +158,12 @@ tidle:  li    S, #0x80                  ; SYNC
         li    R0, #1
         wcfg  LFCFG, R0                 ; right form
         li    R2, #0                    ; R2: 0, token PID (expect DATA) or 2 (expect ACK)
+        li    S, #0                     ; S is read at EOP (ACK test) before any packet shifted it
         watch #1
 .entry hunt
 .code
 .org ORG_RX
+ecrc:   evt   #EV_CRC
 hunt:   li    R1, #0xFFFF               ; no packet yet; CRC init value
         smp                             ; LV = idle level
         wrst
@@ -148,26 +171,42 @@ hunt:   li    R1, #0xFFFF               ; no packet yet; CRC init value
         loop { @tock : shin }
         cmp   S, #0x80                  ; SYNC
         jnz   hunt
-        call  rbyte                     ; PID
+rb:     @tock : shin                    ; no call: L belongs to the EOPCHK watcher
+        jw    rs
+        cmp   R2, #0x2D                 ; CY: DATA expected, push the packet
+        jnc   rt
+        push  S                         ; no taken jump since shin: done before an early EOP (crossover skew)
+rt:     cmp   R1, #0xFF                 ; CY: R1 = 0xFFFF, this byte is the PID
+        jnc   rs
         wcfg  LFSR_LO, R1
         mov   R1, S
-        cmp   R2, #0x2D                 ; CY: DATA expected, push the packet
-pl:     jnc   pn
-        push  S
-pn:     call  rbyte
-        jmp   pl
-
-rbyte:  @tock : shin
-        jnrun rn
+rs:     jnrun rb
         @tock : smp                     ; stuff bit dropped
-rn:     jw    rbyte
-        ret
+        jmp   rb
 
-eop:    rcfg  R0, LFSR_LO               ; residual or token key
-        li    S, #KEY0
+.if EOPCHK
+eret:   ret                             ; crossover SE0: back to the preempted wait (events kept)
+.endif
+eop:                                    ; EOPCHK: no flag may change before the last check (preempted cmp / jcc)
+.if EOPCHK > 2
+        ld    R0, [R0]                  ; delay only
+        jnc0  eret
+.endif
+.if EOPCHK > 1
+        ld    R0, [R0]
+        jnc0  eret
+.endif
+.if EOPCHK
+        ld    R0, [R0]
+.endif
+        rcfg  R0, LFSR_LO               ; residual or token key
+.if EOPCHK
+        jnc0  eret
+.endif
         cmp   R2, #0x2D
         jc    edat
-        cmp   R1, #0xD2
+        cmp   S, #0xD2                  ; ACK: S = last byte (R1 may miss a 1-byte PID; token b2 & 7 = 0 for EP0/1)
+        li    S, #KEY0
         jz    eack
         li    R2, #0
         cmp   R1, #0x69
@@ -203,12 +242,10 @@ edpid:
 txw:    watch #0                        ; own EOP is not a packet
         @fall p2 : watch #1
         jmp   hunt
-ecrc:   evt   #EV_CRC
-        jmp   hunt
 
 eack:   cmp   R2, #2
         li    R2, #0
-        jnz   hunt
+        jnz   tohunt
         st    R2, [S+1]!                ; disarm BUFKEY
         evt   #EV_INACK
 tohunt: jmp   hunt
