@@ -6,7 +6,7 @@ All monitor pads stay `en` = 0 (formally proven never to drive). The programs ha
 |---|---|---|---|
 | UART | 2 x `uart_rx.s` as is (`RXPIN`, `ENG`, `ORG`) | 2 x 8; `TS=1` 2 x ≈ 22 | one copy per direction |
 | `spi_mon.s` | 2: MOSI, MISO on shared SCK/CS | 14 shared (`TS=1` 40) | modes 0–3 (`MODE12`); `apush` micro-loop; watcher 0 = CS rise abort; n-th MOSI byte pairs with n-th MISO byte |
-| `i2c_mon.s` | 1 | ≈ 35 | after each SCL rise samples b, CC0 = SCL fall or SDA edge away from b; `@c0` with SCL high = START (b = 1) / STOP (b = 0) |
+| `i2c_mon.s` | 1 | 39 | START/STOP on two abort watchers (as i2c_tgt); stretch measured on the low phases next to each ACK (timer /16); no timestamps (no cell left for the wrap watcher) |
 
 ## Stream
 Data = plain bytes; I2C address + R/W = first byte after START/Sr; ACK implied.
@@ -17,13 +17,12 @@ Data = plain bytes; I2C address + R/W = first byte after START/Sr; ACK implied.
 | 2 | parity | CS rise | Sr |
 | 3 | | ended mid-byte | STOP |
 | 4 | | | NACK |
-| 5 | | | stretch: SCL low > `TLOW`, + byte = low time / 16 clk (saturating) |
-| 6 | | | START/STOP mid-byte |
+| 5 | | | stretch: SCL low ≥ `TLOW`, + lo, hi = low time in 16-clk steps |
 | 61 | | wrap call may be cut (TS) | same |
 | 62 | timer wrap | wrap | wrap |
 | 63 | LOST | LOST | LOST |
 
-**Timestamps** (`-D TS=1`): T free-running (P = 0xFFFF; `TSPRE` 20 ns / 320 ns / 5.12 µs per step, wrap 1.31 / 21 / 335 ms). `mov R, T`, pushed lo, hi: before each UART character, after SPI evt 1–2, I2C evt 1–3. Watcher 1 (call, CC1 = tick) pushes evt 62. The wrap call's latency races the capture, so a capture ≤ 40 clk before or ≤ 32 clk after a wrap waits until that evt 62 is out. Host: time = W · 65536 + 0xFFFF − T, W = evt 62 count before the TS hi byte, minus 1 if T < TSW. A frame-end abort can cut the wrap call (watcher 0 wins): evt 61 flags it, and the host adds the wrap when the frame's end precedes its start. Cost (SPI, measured): 26 words, CS high ≥ 4.8 µs, first edge ≥ 3.2 µs after CS falls, data hold ≥ 14 clk.
+**Timestamps** (`-D TS=1`): T free-running (P = 0xFFFF; `TSPRE` 20 ns / 320 ns / 5.12 µs per step, wrap 1.31 / 21 / 335 ms). `mov R, T`, pushed lo, hi: before each UART character, after SPI evt 1–2 (none for I2C). Watcher 1 (call, CC1 = tick) pushes evt 62. The wrap call's latency races the capture, so a capture ≤ 40 clk before or ≤ 32 clk after a wrap waits until that evt 62 is out. Host: time = W · 65536 + 0xFFFF − T, W = evt 62 count before the TS hi byte, minus 1 if T < TSW. A frame-end abort can cut the wrap call (watcher 0 wins): evt 61 flags it, and the host adds the wrap when the frame's end precedes its start. Cost (SPI, measured): 26 words, CS high ≥ 4.8 µs, first edge ≥ 3.2 µs after CS falls, data hold ≥ 14 clk.
 
 **Never silent loss:** loss = push to a full FIFO or a missed edge, both set OVR → notice `ESC 0x80|e`, and at the next frame end `jovr` → `ovclr`, `evt #63` (before the frame-end event): the host knows which frame is incomplete. The event never blocks (an `@htx` wait would clear latched edges of the next frame); if it is dropped too, OVR is set again and LOST comes at a later frame end. SPI: a full FIFO drops the rest of the frame (`pull` from the empty RX FIFO sets OVR), because a re-armed loop would answer the next edge late and sample late. The guarantee holds inside each program's timing rules. Outside them, a single late-answered edge can flip a bit unreported (D055).
 
