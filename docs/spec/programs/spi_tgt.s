@@ -1,5 +1,5 @@
 ; spi_tgt.s - SPI target, register device: byte 1 = register number, then table[reg], table[reg+1], ...
-; words: 12 + table | clk/bit: external | max SCK: 4 MHz (default slots; 2 MHz is the MUST), about 6 MHz solo | engines: 1
+; words: 12 + table (FAULTS = 1: 68 + table + fault word) | clk/bit: external | max SCK: 4 MHz (default slots; 2 MHz is the MUST), about 6 MHz solo | engines: 1
 ; pins: p0 = SCK (uio[3]), p1 = CS (uio[0]), p2 = MISO (uio[2]), p3 = MOSI (uio[1], shift input)
 ; modes: 0 and 3 as written; 1 and 2 with the invert bit of p0 in BIND01 (the sampling edge is the
 ;        logical rising edge). MISO follows the shifter: it changes 4-5 clk + pad after each sampling

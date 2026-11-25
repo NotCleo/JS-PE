@@ -23,7 +23,7 @@ def digest(img):
     return hashlib.sha1(repr(sorted(img.words.items())).encode()).hexdigest()[:12]
 
 
-@pytest.mark.parametrize("name,sha", [("uart_tx", "5d021c0da04e"), ("i2c_tgt", "b6ae2a376afe"), ("spi_tgt", "ce4befcc1182")])
+@pytest.mark.parametrize("name,sha", [("uart_tx", "5d021c0da04e"), ("i2c_tgt", "b6ae2a376afe"), ("spi_tgt", "ce4befcc1182"), ("can", "d81016aaa458")])
 def test_default_images_unchanged(name, sha):
     assert digest(prog(name)) == sha and digest(prog(name, FAULTS=0)) == sha
 
@@ -225,3 +225,37 @@ def test_spi_unarmed_and_first_byte():
     assert got[0] == spi_expect(3, 4)
     c, got = spi_fault([(3, 4)], fword(1, pos=0, arg=0xFF))
     assert got[0] == spi_expect(3, 4, 0, 1, 0xFF)
+
+
+# ---- can (E_TX 0 + E_RX 1) against the independent CAN node model
+def can_fault(frames, word, bit=100, phase=0):
+    from models import CanNode, can_host_tx
+    from test_can import run, frame_clk, rx_stream, tx_events
+    c, node = boot(prog("can", FAULTS=1, BIT=bit), phase), CanNode(bit)
+    run(c, node, 12 * bit)
+    c.mem[MAP["FAULT_W"]] = word                                     # E_TX = engine 0
+    seen = []
+    for ident, data in frames:
+        c.host_in[0] += can_host_tx(ident, data)
+        run(c, node, frame_clk(data, bit) + 30 * bit)
+        seen.append((list(node.frames), list(node.errors), c.mem[MAP["FAULT_W"]]))
+    return c, node, seen, rx_stream(c), tx_events(c)
+
+
+@pytest.mark.parametrize("phase", [0, 1, 2, 3])
+@pytest.mark.parametrize("bit,arg", [(80, 0x5A), (100, 0x01), (100, 0xA5), (400, 0x80)])   # 625, 500, 125 kbit/s
+def test_can_crc_fault_then_clean_retry(bit, arg, phase):
+    f = (0x123, [0x00, 0xFF, 0xA5])
+    c, node, seen, rx, tx = can_fault([f, f], fword(1, arg=arg), bit, phase)
+    frames1, errs1, fw1 = seen[0]
+    assert frames1 == [] and errs1 == ["crc"] and fw1 == 0, seen[0]                     # node: CRC error, not delivered
+    assert node.frames == [(0x123, [0x00, 0xFF, 0xA5], 0)] and node.errors == ["crc"]    # host retry: delivered once
+    assert tx == [0x104, 0x101]                     # no ACK from a CRC-error receiver: E_TX ACK error, then sent
+    assert [v for v in rx if v & 0x100] == [0x101, 0x101]          # own E_RX shares the corrupted LFSR: OK
+    assert c.eng[0].ovr == 0 and c.eng[1].ovr == 0
+
+
+def test_can_unarmed_frames_clean():
+    f = (0x7F0, [0x55])
+    c, node, seen, rx, tx = can_fault([f, f], 0)
+    assert node.frames == [(0x7F0, [0x55], 0)] * 2 and node.errors == [] and tx == [0x101, 0x101]

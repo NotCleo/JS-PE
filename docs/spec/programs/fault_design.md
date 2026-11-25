@@ -23,19 +23,19 @@ The host writes FW only between transactions; the program reads it once per tran
 | i2c_tgt | 1 | after POS ACK slots: NACK ARG slots in a row (both counted down in FW) | NACK |
 | | 2 | SCL held ARG x 16 clk (+ ≤ 80 decode) longer, then ACK | stretch length |
 | | 3 | not addressed: no ACK, idle | NACK, nothing pushed |
-| | 4 | SDA low ARG x 16 clk from the ACK, SCL released, watchers off, then idle | SDA stuck (bit errors) |
-| spi_tgt | 1 | response byte POS, bit ARG[2:0] inverted | one-bit mismatch |
+| | 4 | SDA low ARG x 16 clk from the ACK, then idle | SDA stuck (bit errors) |
+| spi_tgt | 1 | response byte POS ^= ARG (mask; bit k = 1 << k) | bit mismatch |
 | | 2, 3 | byte POS is 8 ∓ ARG bits (SHCFG) | later bytes slip ARG bits |
-| can (TX) | 1 | next CRC XOR (ARG << 7) | event 2 + error flag, no event 1; clean retry |
+| can (TX) | 1 | next CRC bits 7..0 XOR ARG (via LFSR_HI before the CRC read) | CRC error, no ACK, not delivered; TX event 4, clean retry |
 
-No program change: hot-unplug = `PAD_*` `en` = 0 (proven: ⇒ `uio_oe` = 0); stuck line = EXEC `p1 <- 0` on a stopped engine.
+No program change: hot-unplug = `PAD_*` `en` = 0 (formally proven).
 
-Random campaigns: `host/fault.py` draws (TYPE, POS, ARG, transaction) from `random.Random(seed)`; same seed, same campaign.
+Random campaigns: `host/fault.py`, `random.Random(seed)`: same seed, same campaign.
 
-## Cost (uart_tx, i2c_tgt measured; spi_tgt, can estimates)
+## Cost (measured)
 | Program | Default words | FAULTS=1 | Timing |
 |---|---|---|---|
 | uart_tx | 8 | 29 + FW (8N1) | BIT ≥ 46 clk (≤ 1.08 Mbaud), per-path `.deadline` |
 | i2c_tgt | 32 | 99 + FW | each ACK slot stretched ≈ 40 clk (+ ≤ 60 while counting down) |
-| spi_tgt | 12 + 8 | ≈ 34 | first edge > 7 clk after CS falls: step 3 |
-| can | 128 | ≈ 135 | SRAM only, `ORG_RX` up; ≤ 500 kbit/s |
+| spi_tgt | 12 + 8 | 68 + 8 + FW | first edge ≥ 160 clk after CS falls, SCK ≤ 1 MHz |
+| can | 128 | 147 + FW | 512-word build, `ORG_RX` + 24; rates unchanged |
