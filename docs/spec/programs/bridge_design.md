@@ -13,7 +13,7 @@ The consumer binds one logical pin's input to G0 (BIND source 16; output stays C
 Word 0 = `halt` + `jmp 0` (reset PC = 0, D109). Code from word 2; buffer at the top, 512−N…511, reserved by `.org 512 − N` + `.space N`; `.assert` code end ≤ 512 − N. Pointers run 0x10000 − N…0xFFFF (bits [8:0] = buffer); overflow to 0 → `add #−N`, so stores stay inside.
 
 ## UART → SPI: ring, valid bit
-Ring of N = 32 (UART cannot pause); slot valid = bit 15 (producer `lih S, #0x80`, consumer stores 0 after `ld`). No shared index words (four registers).
+Ring of N = 32; slot valid = bit 15 (producer `lih S, #0x80`, consumer stores 0 after `ld`). No shared index words (four registers).
 - Producer: slot[WP] valid → **overrun: drop the new byte, `evt #2`**; else store, advance, `sset #0`. Framing error `evt #1`.
 - Consumer: slot[RP] valid → clear, advance, send. Empty → `sclr #0`, reload, wait `@c0` only if still empty. A same-clock set/clear (clear wins) is safe: `st` precedes `sset`, so the reload sees it.
 - ≈ 39 code words + 32 ring.
@@ -23,4 +23,4 @@ One word, one token: only the producer sets G0 (seen 0), only the consumer clear
 
 ## Rates (BACKLOG §3.4)
 - UART → SPI: prototype ceiling 3.57 Mbaud = 357 kB/s (UART BIT 14, SPI BIT 6/8), no ring; step 2 measures the max with the ring. Sustained iff the SPI byte (≈ 8·BIT + 70 clk) < one UART character; else 32-byte bursts, then overrun.
-- I2C → UART: 38.8 kB/s at 400 kHz, 1 Mbaud (I2C limits). Slower UART: SCL stretched ≤ one character, every byte delivered; SMBus (25 ms) needs > 400 baud.
+- I2C → UART: 38.8 kB/s at 400 kHz, 1 Mbaud (I2C limits). Slower UART: SCL stretched ≤ one character; SMBus (25 ms) needs > 400 baud.
