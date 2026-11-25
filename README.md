@@ -173,7 +173,7 @@ The simulator was written from the spec before the RTL. Every program was proven
 | Formal proofs (SymbiYosys, 11 blocks) | 149 properties proven |
 | Mutation testing of the proofs | 211 of 213 mutants caught, 2 equivalent |
 
-Sign-off of the shipped SRAM build ([GDS run 45553919240](https://github.com/NotCleo/JS-PE/actions/runs/45553919240)):
+Sign-off of the shipped SRAM build ([GDS run 45591139824](https://github.com/NotCleo/JS-PE/actions/runs/45591139824) on main, all jobs green; same layout and figures as the sram-retry run 45553919240):
 
 | Check | Result |
 |---|---|
