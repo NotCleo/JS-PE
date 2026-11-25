@@ -8,6 +8,8 @@ from harness import PROG, prog, assemble, boot, simulate, changes
 from models import uart_decode
 from models import I2cControllerModel, i2c_timing, i2c_violations
 from test_i2c import i2c_run
+from models import SpiController
+from test_first import Seq
 
 MAP = {k: int(v) for k, v in re.findall(r"^\.equ\s+(\w+),\s*(\d+)", open(os.path.join(PROG, "cleo_mem.inc")).read(), re.M)}
 ARMED = 0x8000
@@ -21,7 +23,7 @@ def digest(img):
     return hashlib.sha1(repr(sorted(img.words.items())).encode()).hexdigest()[:12]
 
 
-@pytest.mark.parametrize("name,sha", [("uart_tx", "5d021c0da04e"), ("i2c_tgt", "b6ae2a376afe")])
+@pytest.mark.parametrize("name,sha", [("uart_tx", "5d021c0da04e"), ("i2c_tgt", "b6ae2a376afe"), ("spi_tgt", "ce4befcc1182")])
 def test_default_images_unchanged(name, sha):
     assert digest(prog(name)) == sha and digest(prog(name, FAULTS=0)) == sha
 
@@ -163,3 +165,63 @@ def test_i2c_faults_build_um10204(mode, thigh, tlow, rise, word):
     base = sorted(lows)[len(lows) // 2]                                # an unstretched low phase
     extra = [x - base for x in lows if x > base + 5]
     assert len(extra) <= 4 and max(extra, default=0) <= (15 if word == 0 else 70), (base, extra)  # ACK slots only
+
+
+# ---- spi_tgt against the SPI controller model (register device: command, then table[cmd], table[cmd + 1], ...)
+TAB = [0xA5, 0x5A, 1, 2, 3, 4, 5, 6]
+CS_SETUP = 160                         # FAULTS rule: first sampling edge >= 160 clk after CS falls, SCK <= 1 MHz
+
+
+def spi_fault(frames, word, T=50, mode=0, slot=0, cs_setup=CS_SETUP):
+    c = boot(prog("spi_tgt", FAULTS=1), slot)
+    c.mem[MAP["FAULT_W"]] = word
+    ctrls, t = [], c.cycle + 40
+    for cm, n in frames:
+        x = SpiController(T, mode, [cm] + [0] * n, t0=t, cs_setup=cs_setup)
+        ctrls.append(x)
+        t = x.cs_hi + 40
+    cpol = mode >> 1
+
+    def inputs(tt, ch):
+        x = Seq(ctrls)
+        miso = (ch.uio_out >> 2) & (ch.uio_oe >> 2) & 1
+        sck = x.sck(tt) if tt >= ctrls[0].cs_lo else cpol
+        return 8, sck << 3 | x.cs(tt) | x.mosi(tt) << 1 | miso << 2
+    simulate(c, int(ctrls[-1].cs_hi) + 40, inputs)
+    miso = changes(c, lambda uo, o, oe: (o >> 2) & (oe >> 2) & 1)
+    return c, [x.sample(miso) for x in ctrls]
+
+
+def spi_expect(cm, n, pos=None, typ=0, arg=0):
+    # target bit stream: 0x00 during the command, then the responses; word pos changed by the fault
+    words = [(0, 8)]
+    for i in range(n):
+        v, w = TAB[cm + i], 8
+        if i == pos:
+            v, w = (v ^ (arg & 0xFF), 8) if typ == 1 else (v, 8 - arg if typ == 2 else 8 + arg)
+        words.append((v, w))
+    bits = [(v >> (w - 1 - k)) & 1 for v, w in words for k in range(w)]
+    return [sum(b << (7 - k) for k, b in enumerate(bits[8 * j:8 * j + 8])) for j in range(n + 1)]
+
+
+@pytest.mark.parametrize("slot", [0, 1, 2, 3])
+@pytest.mark.parametrize("mode", [0, 3])
+def test_spi_bit_flip(mode, slot):
+    c, got = spi_fault([(1, 5), (1, 5)], fword(1, pos=2, arg=0x81), mode=mode, slot=slot)
+    assert got[0] == spi_expect(1, 5, 2, 1, 0x81) and got[1] == spi_expect(1, 5), got
+    assert c.mem[MAP["FAULT_W"]] == 0 and c.eng[0].ovr == 0
+
+
+@pytest.mark.parametrize("slot", [0, 3])
+@pytest.mark.parametrize("typ,arg", [(2, 3), (2, 1), (3, 2), (3, 7)])
+def test_spi_short_long_word(typ, arg, slot):
+    c, got = spi_fault([(0, 6), (2, 4)], fword(typ, pos=1, arg=arg), slot=slot)
+    assert got[0] == spi_expect(0, 6, 1, typ, arg) and got[1] == spi_expect(2, 4), got
+    assert c.mem[MAP["FAULT_W"]] == 0
+
+
+def test_spi_unarmed_and_first_byte():
+    c, got = spi_fault([(3, 4)], fword(1, arg=0x10) & ~ARMED, cs_setup=60)        # unarmed: shorter setup is enough
+    assert got[0] == spi_expect(3, 4)
+    c, got = spi_fault([(3, 4)], fword(1, pos=0, arg=0xFF))
+    assert got[0] == spi_expect(3, 4, 0, 1, 0xFF)
