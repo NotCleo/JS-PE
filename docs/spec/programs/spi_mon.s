@@ -24,6 +24,7 @@
 ;       (watcher 0 wins, ISA 6): if the frame's end time precedes its start, add one wrap from there on; frames longer
 ;       than one wrap (1.31 ms at TSPRE 0, 21 ms at 1) cannot be repaired and the host marks them +-1 wrap. A TS is up
 ;       to 24 clk late near a wrap (wrap call or window wait between the edge and the capture)
+;       evt 62 dropped at a full FIFO is part of a loss: after evt 63 the host restarts its time base.
 ; rule: CS high >= 25 clk (500 ns) after a frame of whole bytes, >= 40 clk (800 ns) after a partial byte or a loss.
 ;       TS = 1: CS high >= 240 clk (4.8 us), first sampling edge >= 160 clk (3.2 us) after CS falls (capture + wrap
 ;       window wait); the ISS offset sweep fails at 190 / 80 (sw/tests/test_spi_mon.py).
