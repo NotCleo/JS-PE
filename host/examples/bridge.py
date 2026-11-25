@@ -67,11 +67,13 @@ if BRIDGE == "i2c_uart":
     while prx.rx_fifo():           # TXD was low until its pad was enabled
         prx.get()
     i2c = SoftI2C(scl=scl, sda=sda, freq=100_000, timeout=50_000)
-    i2c.writeto(0x42, msg)         # the chip stretches SCL whenever the UART side is busy
-    got, t = bytearray(), time.ticks_ms()
-    while len(got) < len(msg) and time.ticks_diff(time.ticks_ms(), t) < 100:
-        if prx.rx_fifo():
-            got.append(prx.get() >> 24)
+    got = bytearray()
+    for k in range(0, len(msg), 4):    # PIO RX FIFO holds 4 bytes: drain it between short writes
+        i2c.writeto(0x42, msg[k:k + 4])
+        t = time.ticks_ms()
+        while len(got) < min(k + 4, len(msg)) and time.ticks_diff(time.ticks_ms(), t) < 20:
+            if prx.rx_fifo():
+                got.append(prx.get() >> 24)
     print("UART partner received:", bytes(got), "ok" if got == msg else "MISMATCH")
     try:
         i2c.readfrom(0x42, 1)

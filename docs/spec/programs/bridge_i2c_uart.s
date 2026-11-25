@@ -1,11 +1,13 @@
 ; bridge_i2c_uart.s - on-chip bridge: I2C target writes (E0) -> mailbox -> UART TX (E1); no host in the data path
 ; words: 30 code (park 2, E0 20, E1 8) + 1 mailbox at 511 | engines: 2 | flag: G0 = mailbox full
-; max: I2C limits while UART is faster: 38.8 kB/s at 400 kHz, 9.96 kB/s at 100 kHz (incl. START, address, STOP; UBIT 50)
+; max: I2C limits while UART is faster: 38.8 kB/s at 400 kHz, 9.96 kB/s at 100 kHz (12-byte writes incl. START, address,
+;       STOP; UBIT 50)
 ; pins: E0 p0 = SCL uio6 (od), p1 = SDA uio5 (od), p2 = G0; E1 p0 = TXD uo0, p1 = G0
 ; I2C: 7-bit address ADDR, writes only: every data byte is ACKed and forwarded; R/W = 1 or another address -> no ACK
 ; UART: 8N1, UBIT clk/bit, a byte starts as soon as the mailbox fills (stop bit >= UBIT)
 ; back-pressure: after the ACK of a byte, SCL is held low until the mailbox is empty: one UART character minus
-;       one I2C byte (3 275 clk at UBIT 434), so SMBus controllers (25 ms timeout) need > 400 baud;
+;       one I2C byte (3 275 clk at UBIT 434). SMBus: one stretch < 25 ms needs > 400 baud, and the cumulative
+;       stretch per message (tLOW:SEXT 25 ms) needs about n * 10 / baud < 25 ms for n bytes (32 bytes: > 13 kbaud);
 ;       st + sset run while SCL is held, so a START/STOP watcher abort cannot split them
 ; timing: I2C side as i2c_tgt.s (THD, TSU, phases >= 30 clk at 400 kHz)
 

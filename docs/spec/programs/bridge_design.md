@@ -1,6 +1,6 @@
 # On-chip bridges (BACKLOG rank 1)
 
-Two Cleo images; the host only loads and watches.
+Two Cleo images; the host loads and watches.
 
 ## Engines and pads
 - `bridge_uart_spi.s`: E1 UART RX (`ui_in[7]`, no pad) → E0 SPI controller, mode 0, MSB first, one byte per CS (SCK `uio3`, CS `uio0`, MOSI `uio1`).
@@ -22,5 +22,5 @@ Ring of N = 32, loaded free (bit 15 = 1) by the image. A received byte has bit 1
 One word, one token: only the producer sets G0 (seen 0), only the consumer clears it (seen 1). Full → `jhi p2, $` holds SCL low after ACK. `st` + `sset` run while SCL is held: no START/STOP abort can split them. Reads, other addresses: no ACK. 30 code words + mailbox.
 
 ## Rates (ISS)
-- UART → SPI: 3.57 Mbaud = 357 kB/s (UART BIT 14). SPI byte P = 9·BIT + 3·CSDLY + 36 clk; sustained iff P ≤ 10·UBIT (BIT ≤ 6 at 3.57 Mbaud). Else first drop at byte ≈ 32·P/(P − 10·UBIT): 307, 117, 68 at BIT 8, 12, 20.
-- I2C → UART: 38.8 / 9.96 kB/s at 400 / 100 kHz. Slower UART: stretch = character − I2C byte; SMBus (25 ms) needs > 400 baud.
+- UART → SPI: 3.57 Mbaud = 357 kB/s (UART BIT 14, sender ±2 %). SPI byte P = 9·BIT + 3·CSDLY + 36 clk; sustained iff P ≤ 10·UBIT (BIT ≤ 6 at 3.57 Mbaud). Else first drop at byte ≈ 32·P/(P − 10·UBIT): 307, 117, 68 at BIT 8, 12, 20.
+- I2C → UART: 38.8 / 9.96 kB/s at 400 / 100 kHz (12-byte writes). Slower UART: stretch = character − I2C byte; SMBus: n·10/baud < 25 ms.

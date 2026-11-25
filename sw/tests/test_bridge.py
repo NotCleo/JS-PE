@@ -8,7 +8,7 @@ from models import UartSender, spi_ctrl_check, uart_decode, I2cControllerModel, 
 import test_i2c
 
 N, RING, CODE = 32, 480, 47
-UMAX = 14                       # fastest UART bit time with every byte exact in all 4 phases (measured)
+UMAX = 14                       # fastest UART bit time with every byte exact in all 4 phases, senders +-2 % (measured)
 
 
 def rboot(img, phase=0, seed=0):
@@ -23,10 +23,11 @@ def rboot(img, phase=0, seed=0):
     return c
 
 
-def us_run(data, ubit, sbit, phase=0, gap=0.0, bad_stop=()):
+def us_run(data, ubit, sbit, phase=0, gap=0.0, bad_stop=(), f=1.0):
+    # f: sender bit time = f * UBIT (0.98 = 2 % fast)
     c = rboot(prog("bridge_uart_spi", UBIT=ubit, BIT=sbit), phase, seed=ubit * 31 + sbit + phase)
     t0 = c.cycle
-    s = UartSender(ubit, data, t0=t0 + 30, gap=gap, bad_stop=bad_stop)
+    s = UartSender(ubit * f, data, t0=t0 + 30, gap=gap, bad_stop=bad_stop)
     line = lambda t, ch: (s.level(t) << 7 | 8, 0)
     simulate(c, int(s.end) + 2000, line)
     for _ in range(400):
@@ -74,16 +75,26 @@ def test_us_size_and_park():
 @pytest.mark.parametrize("ubit,sbit", [(UMAX, 6), (UMAX, 8), (50, 8), pytest.param(434, 30, marks=pytest.mark.slow)])
 def test_us_rates(ubit, sbit):
     for ph in range(4):
-        data = rand_bytes(40, ubit + sbit + ph)
-        c, s, got, ev, _ = us_run(data, ubit, sbit, ph)
-        assert got == data and ev == [], (ph, len(got))
+        for f in ((0.98, 1.0, 1.02) if ubit == UMAX else (1.0,)):
+            data = rand_bytes(40, ubit + sbit + ph)
+            c, s, got, ev, _ = us_run(data, ubit, sbit, ph, f=f)
+            assert got == data and ev == [], (ph, f, len(got))
+
+
+@pytest.mark.slow
+def test_us_sustained_bit6():
+    # P = 140 clk = one character at UBIT 14: 400 back-to-back bytes, no drop (40 bytes would fit the ring anyway)
+    for ph in range(4):
+        data = rand_bytes(400, ph)
+        c, s, got, ev, _ = us_run(data, UMAX, 6, ph)
+        assert got == data and ev == [], ph
 
 
 def test_us_max_rate_edge():
     bad = 0
     for ph in range(4):
         data = rand_bytes(40, 7 + ph)
-        c, s, got, ev, _ = us_run(data, UMAX - 1, 6, ph)
+        c, s, got, ev, _ = us_run(data, UMAX - 1, 6, ph, f=0.98)     # 2 % fast sender
         bad += got != data or ev != []
     assert bad
 
@@ -113,14 +124,15 @@ def test_us_spi_byte_period(sbit, csdly):
         assert all(abs(b - a - (9 * sbit + 3 * csdly + 36)) <= 2 for a, b in zip(lo[1:], lo[2:]))
 
 
-@pytest.mark.parametrize("sbit,first,phases", [(20, 68, range(4)), (12, 117, [0])])
-def test_us_burst_before_first_drop(sbit, first, phases):
+@pytest.mark.parametrize("sbit,first", [(20, (68,)), pytest.param(12, (117,), marks=pytest.mark.slow),
+                                         pytest.param(8, (306, 307), marks=pytest.mark.slow)])
+def test_us_burst_before_first_drop(sbit, first):
     # back-to-back characters at UBIT 14: the first dropped byte is number `first` (~ 32 * P / (P - 140))
-    for ph in phases:
-        data = rand_bytes(first + 12, sbit + ph)
+    for ph in range(4):
+        data = rand_bytes(first[-1] + 12, sbit + ph)
         c, s, got, ev, lo = us_run(data, UMAX, sbit, ph)
         d = ring_check(data, s, got, ev, lo, UMAX)
-        assert d[0] == first, (ph, d[:3])
+        assert d[0] in first, (ph, d[:3])
 
 
 def test_us_burst_absorbed():

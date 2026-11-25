@@ -1,17 +1,18 @@
 ; bridge_uart_spi.s - on-chip bridge: UART RX (E1) -> ring -> SPI controller TX (E0); no host in the data path
 ; words: 47 code (park 2, E1 22, E0 23) + 32 ring | EXEC init 31 | engines: 2 | flag: G0
-; max: UBIT 14 = 3.57 Mbaud, every byte exact in all 4 slot phases (sw/tests/test_bridge.py)
+; max: UBIT 14 = 3.57 Mbaud with senders at -2 %, 0, +2 %, every byte exact in all 4 slot phases (sw/tests/test_bridge.py)
 ; pins: E1 p0 = RXD (ui_in[RXPIN], no pad); E0 p0 = SCK uio3, p1 = CS uio0, p2 = MOSI uio1 (MISO not used)
 ; UART 8N1, UBIT clk/bit; SPI mode 0, MSB first, one byte per CS, BIT clk/bit, CS high >= CSDLY clk between bytes
 ; ring: N slots at 512-N..511, initialised free (bit 15 = 1); a byte (bit 15 = 0) marks its slot full;
 ;       overrun when slot[WP] is still full at the start bit
 ; host: E1 event 1 = framing error (byte still forwarded), event 2 = overrun (byte dropped); nothing else
-; rate: SPI byte period P = 9*BIT + 3*CSDLY + 36 clk (+-2, measured BIT 4-30, all phases); sustained iff P <= 10*UBIT:
-;       at UBIT 14 (3.57 Mbaud, CSDLY 16) SPI BIT <= 6. Slower SPI: back-to-back characters, first drop at byte
+; rate: SPI byte period P = 9*BIT + 3*CSDLY + 36 clk (+-2; measured BIT 4-30, asserted at BIT 4/8/20, 4 phases);
+;       sustained iff P <= 10*UBIT: at UBIT 14 (3.57 Mbaud, CSDLY 16) SPI BIT <= 6 (400 bytes, no drop). Slower SPI: back-to-back characters, first drop at byte
 ;       ~ 32*P/(P - 10*UBIT): at UBIT 14 byte 306-307 (BIT 8), 117 (BIT 12), 68 (BIT 20); the ring is loaded free by the image
 
 .equ UBIT,   50                 ; UART bit time, clk
 .equ RXPIN,  7
+.equ EARLY,  3                  ; sample 3 clk before the bit middle: start edges are answered late at high rates
 .equ BIT,    8                  ; SPI bit time, clk
 .equ SMP,    BIT - 2            ; MOSI launch to SCK rise, clk (>= 3)
 .equ CSDLY,  16
@@ -24,8 +25,8 @@
 .init
         li    R0, #UBIT - 1
         mov   P, R0
-        li    R0, #UBIT - UBIT / 2
-        mov   C, R0                     ; tock = middle of each bit
+        li    R0, #UBIT - UBIT / 2 + EARLY
+        mov   C, R0                     ; tock = EARLY clk before the middle of each bit
         li    R0, #0x17                 ; SHCFG: 8 bits, LSB first, input p0
         wcfg  SHCFG, R0
         li    R0, #RXPIN
