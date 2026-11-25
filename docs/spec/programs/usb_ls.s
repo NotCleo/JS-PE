@@ -8,8 +8,10 @@
 ; RX host stream: per SETUP/OUT data packet [DATA PID, payload, CRC lo, CRC hi, token PID] + EV_OK or EV_CRC;
 ;   EV_INACK when the host ACKed the armed buffer. Bus reset: RP2350 reads uio4/uio5 on its GPIOs (SE0 >= 2.5 us).
 ; LIMITS: no stuff-error check (CRC / key compare catch it); a token key equal to 0, 0xFFFF or 0xB001 aliases.
-; builds: MEMWORDS 128 (flop memory, default) or -D MEMWORDS=512 --mem 512 (SRAM): the options below follow it.
-;   128: no PID check, SE0 < 9 clk ignored (crossover skew <= 8 clk, 167 ns; 512: <= 10 clk, 210 ns), D+ read back.
+; builds (the option defaults follow MEMWORDS; any -D overrides one):
+;   128 words (flop, default): --mem 128           = -D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0 -> 128 words
+;   512 words (SRAM): -D MEMWORDS=512 --mem 512    = -D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1 -> 142 words
+;   128: no PID check, crossover SE0 skew <= 8 clk (167 ns), D+ read back; 512: all on, skew <= 10 clk (210 ns).
 
 .equ CLK_HZ, 48000000
 .equ BIT,    CLK_HZ / 1500000   ; 32 clk per bit

@@ -31,6 +31,7 @@ Outputs: `<name>.bin` (load image for [host/jspe.py](https://github.com/NotCleo/
 | 7 | [ws2812.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/ws2812.s) | WS2812 / SK6812 | 2 | 9 | 1 (E0) | DOUT `uo_out[2]` | `ENG`, `ORG` | 3 bytes per LED (G, R, B) as one burst; pause ≥ 280 µs latches | — | [ws2812.py](https://github.com/NotCleo/JS-PE/blob/main/host/examples/ws2812.py) |
 | 8 | [manchester.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/manchester.s) | Manchester TX + RX | 2 | TX 9, RX 11–14 | 2 (E0 TX, E1 RX) | TX `uo_out[3]`, RX `ui_in[4]` | `BIT`, `CVCHK`; `inv` pad / bind invert for the other convention | TX bytes, sent MSB first without gaps | RX bytes after the SFD; event 4 = end of frame or code violation | [manchester.py](https://github.com/NotCleo/JS-PE/blob/main/host/examples/manchester.py) |
 | 9 | [can.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/can.s) ([design note](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/can_design.md)) | CAN 2.0A node | 3 | 128 | 2 (E_RX, E_TX) | bus `uio[4]` od | `BIT`, `ORG_TX`, `ORG_RX` (`-D ORG_TX=0 -D ORG_RX=62` on the flop build) | frames to send | received frames as bytes + event (1 = frame OK, others = errors; see header) | planned |
+| 10 | [usb_ls.s](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls.s) ([design note](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls_design.md)) | USB 2.0 LS device (HID keyboard) | added after rtl-freeze-v1; ISS + RTL lockstep; not on hardware | 128 (128-word build), 142 (512-word build) | 2 (E0 TX, E1 RX) | D+ `uio[4]`, D− `uio[5]` inv, pull-up `uio[6]` | `MEMWORDS` 128/512 sets the defaults; `OWNCHK`, `PIDCHK`, `EOPCHK` 0–3, `TXJK`, `SAMPLE`, `TOCK`. 128: crossover SE0 ≤ 167 ns, read-back J/K, no PID check; 512: full 210 ns, register J/K, PID checks | WRMEM only while the bus is active: IN buffer, token keys, BUFKEY | per SETUP/OUT data packet: DATA PID, payload, CRC, token PID + event 1 (OK) / 2 (CRC); event 3 = IN data ACKed | [usb_hid.py](https://github.com/NotCleo/JS-PE/blob/main/host/examples/usb_hid.py) (not run on hardware) |
 
 Words are as stated in each header (range = options). The sum has to fit 128 words for programs that run together.
 
@@ -44,6 +45,7 @@ Words are as stated in each header (range = options). The sum has to fit 128 wor
 | i2c_ctrl (E0) + i2c_tgt (E1) on one bus | E0, E1 | `test_ctrl_tgt_two_engines` in [test/test_i2c.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_i2c.py) (R) |
 | manchester TX → RX loop-back | E0, E1 | `test_m4_loopback` in [test/test_manchester.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_manchester.py) (R) |
 | can.s alone (both engines) | E_RX, E_TX | [test/test_can.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_can.py) (R, G) |
+| usb_ls.s alone (both engines) | E0, E1 | [test/test_usb_ls.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_usb_ls.py) (R), [sw/tests/test_usb_enum.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/test_usb_enum.py) (I) |
 
 ## 4. Adding a program
 

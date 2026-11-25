@@ -78,7 +78,7 @@ All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound v
 - A bus reset in the middle of a SETUP/OUT closes the pending data packet as EV_CRC (no bytes); the next SETUP works at once (tested).
 
 ## 12. Builds and slow edges (step 6)
-`MEMWORDS` (128 default, `-D MEMWORDS=512 --mem 512`) sets the defaults; each is overridable with `-D`. BUF = 118 or 246 (one-word `li`; 246 also makes a 512 build fail at `--mem 128`).
+`MEMWORDS` sets the defaults; each is overridable with `-D`. Default sets: 128 words (`--mem 128`) = `-D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0` (128 words); 512 words (`-D MEMWORDS=512 --mem 512`) = `-D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1` (142 words, all checks on). BUF = 118 or 246 (one-word `li`; 246 also makes a 512 build fail at `--mem 128`).
 
 | Option | 128 words (128) | 512 words (142) | Words |
 |---|---|---|---|
