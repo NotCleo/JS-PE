@@ -195,7 +195,7 @@ def spi_fault(frames, word, T=50, mode=0, slot=0, cs_setup=CS_SETUP):
 def spi_expect(cm, n, pos=None, typ=0, arg=0):
     # target bit stream: 0x00 during the command, then the responses; word pos changed by the fault
     words = [(0, 8)]
-    for i in range(n):
+    for i in range(min(n + 1, len(TAB) - cm)):                        # one more word: a short word pulls it in
         v, w = TAB[cm + i], 8
         if i == pos:
             v, w = (v ^ (arg & 0xFF), 8) if typ == 1 else (v, 8 - arg if typ == 2 else 8 + arg)
