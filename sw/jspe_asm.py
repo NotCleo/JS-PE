@@ -331,6 +331,9 @@ def pad_index(name):
 
 
 # ---------------- assembler core ----------------
+INCDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "spec", "programs")
+
+
 def expand_includes(path, text, depth=0):
     out = []
     for ln, raw in enumerate(text.splitlines(), 1):
@@ -338,14 +341,16 @@ def expand_includes(path, text, depth=0):
         if not m:
             out.append((path, ln, raw))
             continue
-        inc = os.path.join(os.path.dirname(path), m.group(1))
         if depth >= 8:
             raise AsmError("%s:%d: .include nested too deep" % (os.path.basename(path), ln))
-        try:
-            with open(inc) as f:
-                body = f.read()
-        except OSError:
+        for d in (os.path.dirname(path), INCDIR):        # the including file's folder, then the programs folder
+            inc = os.path.join(d, m.group(1))
+            if os.path.isfile(inc):
+                break
+        else:
             raise AsmError("%s:%d: cannot open %s" % (os.path.basename(path), ln, m.group(1)))
+        with open(inc) as f:
+            body = f.read()
         out += expand_includes(inc, body, depth + 1)
     return out
 

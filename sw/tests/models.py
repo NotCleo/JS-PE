@@ -351,6 +351,7 @@ class I2cControllerModel:
         self.state, self.t_next = "idle", 0
         self.read = []
         self.acks = []
+        self.errs = []           # (write byte index, bit) sampled 0 while released
         self.busy_until = 0
         self.ops = []
 
@@ -402,6 +403,8 @@ class I2cControllerModel:
                 return
             elif op[0] == "sample":
                 self.cur.append(sda)
+                if op[1] == "W" and op[2] < 8 and self.sda_rel and not sda:
+                    self.errs.append((len(self.acks), op[2]))     # SDA low while released: stuck line / lost arbitration
                 if op[2] == 8:
                     if op[1] == "W":
                         self.acks.append(sda)

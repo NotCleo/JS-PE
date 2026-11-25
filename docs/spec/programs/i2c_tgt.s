@@ -1,5 +1,5 @@
 ; i2c_tgt.s - I2C target: 7-bit address, receive with ACK, transmit until NACK, clock stretching
-; words: 32 | clk/bit: external (125 at 400 kHz); SCL hold 3-4 clk + pad after SCL falls, own SDA edges THD + 3..4 clk after it | max: 400 kHz (phases >= 30 clk against the 14-clk bound); 1 MHz needs THD 5 and is marginal (13-clk high phase) | engines: 1
+; words: 32 (FAULTS = 1: 99 + fault word) | clk/bit: external (125 at 400 kHz); SCL hold 3-4 clk + pad after SCL falls, own SDA edges THD + 3..4 clk after it | max: 400 kHz (phases >= 30 clk against the 14-clk bound); 1 MHz needs THD 5 and is marginal (13-clk high phase) | engines: 1
 ; pins: p0 = SCL (uio[6], open-drain), p1 = SDA (uio[5], open-drain, shift input)
 ; host: every addressed transfer starts with the address byte {addr, R/W}. Write: each received byte
 ;       follows; SCL is stretched while the host FIFO is full. Read: the host supplies each byte to
@@ -17,6 +17,11 @@
 ; no timeout: if the controller stops mid-read while a 0 is driven, SDA stays low until the host sends RST
 ; spacing: SCL high and low phases >= 30 clk at 400 kHz (>= 13 clk at 1 MHz); low phase > THD + 3 clk
 ; bound: every guard armed <= 14 clk after the previous SCL edge
+; FAULTS = 1 (fault_design.md): at every ACK slot the target gives (SCL held, so the check only stretches) the
+;          fault word FAULT_W + ENG is read; POS = ACK slots to let pass first (counted down in the word), then
+;          TYPE 1 NACK ARG slots in a row (ARG counted down), 2 SCL held ARG x 16 clk longer, then ACK, 3 not
+;          addressed (no ACK, back to idle), 4 SDA held low ARG x 16 clk from the ACK (watchers off, SCL released,
+;          then idle). Cleared when done (fires once).
 
 .equ ADDR, 0x42
 .equ THD,  13                   ; own SDA changes THD + 3..4 clk after SCL falls (320-340 ns)
@@ -27,6 +32,9 @@
 
 .equ ENG,    0                  ; engine and load address: override with -D
 .equ ORG,    144
+.equ FAULTS, 0                  ; 1 = fault-injection variant
+.include "cleo_mem.inc"
+.equ FW,     FAULT_W + ENG
 .engine ENG
 .pad uio6, p0, od
 .pad uio5, p1, od
@@ -64,8 +72,12 @@ start:  p1 <- 1, p0 <- 1                ; a repeated START may arrive while we h
         cmp   R1, R0
         jnz   idle                      ; not ours
         @fall p0 : p0 <- 0              ; eighth clock over: hold SCL
+.if FAULTS
+        call  fchk                      ; CY = 0: the slot was handled
+        jnc   aack
+.endif
         @tick : p1 <- 0                 ; THD later: ACK
-        @htx  : push S                  ; address byte to the host
+aack:   @htx  : push S                  ; address byte to the host
         tset  R2                        ; ACK setup
         jb    rd                        ; last bit shifted in = R/W
 ; receive
@@ -73,8 +85,12 @@ wr:     @tick : p0 <- 1                 ; release SCL: the controller reads the 
         @tick : p1 <- 1                 ; THD after the ninth clock fell: end of the ACK bit
         loop { @rise p0 : shin }        ; next byte
         @fall p0 : p0 <- 0              ; eighth clock over: hold SCL
+.if FAULTS
+        call  fchk
+        jnc   wack
+.endif
         @tick : p1 <- 0                 ; THD later: ACK
-        @htx  : push S                  ; stretches while the host FIFO is full
+wack:   @htx  : push S                  ; stretches while the host FIFO is full
         tset  R2                        ; ACK setup
         jmp   wr
 ; transmit
@@ -89,3 +105,64 @@ rdbyte: @fall p0 : p0 <- 0              ; ninth clock over: hold SCL
         @tick : p1 <- 1                 ; THD after the eighth fall: SDA released for the controller's ACK
         @rise p0 : jlo p1, rdbyte       ; ACK: another byte
         jmp   idle                      ; NACK: done, wait for STOP or a new START
+.if FAULTS
+; ACK slot check, SCL held low; R1, R2 scratch, R2 = TSU - 1 again on return
+fchk:   li    R1, #FW
+        ld    R2, [R1]
+        shl   R2, R2                    ; CY = ARMED
+        jnc   fret
+        ld    R2, [R1]
+        li    R1, #0x0F00
+        tst   R2, R1                    ; POS = 0: fire at this slot
+        jz    fire
+        li    R1, #0x0100
+        sub   R2, R1                    ; one slot nearer
+        li    R1, #FW
+        st    R2, [R1]
+fret:   li    R2, #TSU - 1
+        cmp   R2, #0                    ; CY = 1: the caller ACKs as usual
+        ret
+fire:   shl   R2, R2                    ; drop ARMED
+        shl   R2, R2                    ; CY = TYPE[2]
+        jc    fstk
+        shl   R2, R2                    ; CY = TYPE[1]
+        jc    f23
+        @tick : nop                     ; TYPE 1: NACK (SDA stays released)
+        li    R1, #FW
+        ld    R2, [R1]
+        add   R2, #-1                   ; one NACK used
+        li    R1, #0xFF
+        tst   R2, R1
+        jnz   fput
+fclr:   li    R2, #0                    ; fault complete
+fput:   li    R1, #FW
+        st    R2, [R1]
+        li    R2, #TSU - 1
+        cmp   R2, #255                  ; CY = 0: slot handled
+        ret
+f23:    shl   R2, R2                    ; CY = TYPE[0]; R2 = ARG << 4 (POS = 0)
+        jc    fign
+        tset  R2                        ; TYPE 2: SCL held ARG x 16 clk longer
+        @tick : p1 <- 0                 ; then ACK
+        jmp   fclr
+fstk:   shl   R2, R2
+        shl   R2, R2                    ; TYPE 4: R2 = ARG << 4
+        @tick : p1 <- 0                 ; SDA low, THD after the fall
+        watch #0                        ; START/STOP watchers off
+        li    R1, #0
+        wcfg  TCFG, R1                  ; no SCL sync of the timer meanwhile
+        tset  R2
+        p0 <- 1                         ; SCL released: the controller runs into the low SDA
+        @tick : p1 <- 1                 ; SDA released
+        li    R1, #0x4800
+        wcfg  TCFG, R1
+        watch #3
+fign:   li    R2, #0                    ; TYPE 3 (and after 4): not addressed, back to idle
+        li    R1, #FW
+        st    R2, [R1]
+        li    R2, #TSU - 1
+        jmp   idle
+.reserve FW, 1
+.org FW
+        .word 0
+.endif
