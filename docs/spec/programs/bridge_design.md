@@ -19,8 +19,8 @@ Ring of N = 32, loaded free (bit 15 = 1) by the image. A received byte has bit 1
 - 47 code words + 32 ring.
 
 ## I2C → UART: mailbox, stretching
-One word, one token: only the producer sets G0 (seen 0), only the consumer clears it (seen 1). Full → `jhi p2, $` holds SCL low after ACK. `st` + `sset` run while SCL is held: no START/STOP abort can split them. R/W = 1 NACKed at the address. ≈ 34 + 1 words.
+One word, one token: only the producer sets G0 (seen 0), only the consumer clears it (seen 1). Full → `jhi p2, $` holds SCL low after ACK. `st` + `sset` run while SCL is held: no START/STOP abort can split them. Reads, other addresses: no ACK. 30 code words + mailbox.
 
 ## Rates (ISS)
 - UART → SPI: 3.57 Mbaud = 357 kB/s (UART BIT 14). SPI byte P = 9·BIT + 3·CSDLY + 36 clk; sustained iff P ≤ 10·UBIT (BIT ≤ 6 at 3.57 Mbaud). Else first drop at byte ≈ 32·P/(P − 10·UBIT): 307, 117, 68 at BIT 8, 12, 20.
-- I2C → UART: 38.8 kB/s at 400 kHz, 1 Mbaud (I2C limits). Slower UART: SCL stretched ≤ one character; SMBus (25 ms) needs > 400 baud.
+- I2C → UART: 38.8 / 9.96 kB/s at 400 / 100 kHz. Slower UART: stretch = character − I2C byte; SMBus (25 ms) needs > 400 baud.

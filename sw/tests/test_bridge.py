@@ -4,7 +4,8 @@ import random
 import pytest
 from harness import prog, simulate, changes
 from jspe_iss import Chip
-from models import UartSender, spi_ctrl_check
+from models import UartSender, spi_ctrl_check, uart_decode, I2cControllerModel, i2c_timing, i2c_violations
+import test_i2c
 
 N, RING, CODE = 32, 480, 47
 UMAX = 14                       # fastest UART bit time with every byte exact in all 4 phases (measured)
@@ -142,3 +143,83 @@ def test_us_framing_error():
     data = [0x11, 0x22, 0x33, 0x44]
     c, s, got, ev, _ = us_run(data, 50, 8, 2, gap=50, bad_stop=(1,))
     assert got == data and drops(s, ev, 1) == [1] and len(ev) == 1
+
+
+# ---- I2C target writes -> mailbox -> UART TX (bridge_i2c_uart.s)
+IU_CODE, MBOX = 30, 511
+
+
+def iu_run(script, ubit, phase=0, thigh=60, tlow=65, ncyc=400000):
+    c = rboot(prog("bridge_i2c_uart", UBIT=ubit), phase, seed=ubit + phase)
+    m = I2cControllerModel(script, thigh, tlow)
+    t0 = c.cycle
+    mon, hist, drv = test_i2c.i2c_run(c, m, ncyc, 0, done=m.done)
+    t1 = c.cycle
+    assert m.done()
+    simulate(c, 25 * ubit, lambda t, ch: (0x08, 0x60))         # bus idle; mailbox + shifter drain (2 characters)
+    txd = changes(c, lambda uo, o, oe: uo & 1, init=1)
+    frames = uart_decode(txd, ubit)
+    for st, v, pok, sok in frames:                               # edges of a frame exactly on its bit grid
+        assert sok and all((t - st) % ubit == 0 for t, _ in txd if st <= t <= st + 9 * ubit)
+    assert not any(c.host_out)
+    return m, mon, hist, [f[1] for f in frames], t1 - t0
+
+
+def writes(data, addr=0x84):
+    return [("S",), ("W", addr)] + [("W", d) for d in data] + [("P",)]
+
+
+def scl_low_max(hist):
+    lo, best = None, 0
+    for t, scl, sda in hist:
+        if not scl and lo is None:
+            lo = t
+        elif scl and lo is not None:
+            best, lo = max(best, t - lo), None
+    return best
+
+
+def test_iu_size_and_park():
+    img = prog("bridge_i2c_uart")
+    assert len([a for a in img.words if a < MBOX]) == IU_CODE and MBOX in img.words
+    c = Chip()
+    c.load_image(img)
+    c.start([0, 1, 2, 3])
+    simulate(c, 50, lambda t, ch: (0x08, 0x60))
+    assert all(e.halted and not e.run for e in c.eng)
+
+
+@pytest.mark.parametrize("thigh,tlow,rate", [(60, 65, 0.0388), (250, 250, 0.00996)])
+def test_iu_rate_i2c_limited(thigh, tlow, rate):
+    # UART 1 Mbaud is faster than I2C: no stretch beyond the ACK, rate set by the bus (kB per us)
+    for ph in range(4):
+        data = rand_bytes(12, 3 + ph)
+        m, mon, hist, got, dt = iu_run(writes(data), 50, ph, thigh, tlow)
+        assert got == data and m.acks == [0] * 13
+        assert len(data) / (dt / 50.0) == pytest.approx(rate, abs=0.0005)
+        assert not i2c_violations(i2c_timing(hist), "Fm" if thigh < 100 else "Sm")
+
+
+@pytest.mark.parametrize("ubit", [434, pytest.param(1736, marks=pytest.mark.slow)])
+def test_iu_stretch_while_uart_slower(ubit):
+    # UART slower than I2C: SCL held low until the mailbox empties, every byte delivered at the UART pace
+    data = rand_bytes(10, ubit)
+    m, mon, hist, got, dt = iu_run(writes(data), ubit, 1)
+    assert got == data and m.acks == [0] * 11
+    assert dt >= (len(data) - 2) * 10 * ubit                       # paced by the UART
+    assert 10 * ubit - 9 * 125 <= scl_low_max(hist) <= 10 * ubit       # stretch = one character - one I2C byte
+    assert not i2c_violations(i2c_timing(hist, low_max=200), "Fm")
+
+
+def test_iu_nack_read_and_other_address():
+    data = [0x5A, 0xA5]
+    script = [("S",), ("W", 0x85), ("P",), ("S",), ("W", 0x86), ("W", 0x11), ("P",)] + writes(data)
+    m, mon, hist, got, dt = iu_run(script, 50, 2)
+    assert m.acks == [1, 1, 1, 0, 0, 0] and got == data
+
+
+def test_iu_repeated_start_and_stop():
+    a, b, c_, d = 0x10, 0x20, 0x30, 0x40
+    script = [("S",), ("W", 0x84), ("W", a), ("W", b), ("S",), ("W", 0x84), ("W", c_), ("P",)] + writes([d])
+    m, mon, hist, got, dt = iu_run(script, 434, 3)
+    assert got == [a, b, c_, d] and m.acks == [0] * 7
