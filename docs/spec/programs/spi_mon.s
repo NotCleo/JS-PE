@@ -1,6 +1,14 @@
 ; spi_mon.s - passive SPI monitor: MOSI on one engine, MISO on another, one shared code copy (monitor_design.md)
-; words: 14 (TS = 1: 40) | clk/bit: external | max SCK: 12.5 MHz (sampling edges >= 4 clk apart; ISS passes at 2);
-;        TS = 1: data held >= 14 clk after each sampling edge (1.78 MHz at 50 % duty) | engines: 2
+; words: 14 (TS = 1: 40) | clk/bit: external | engines: 2
+; max SCK: 12.5 MHz in simulation (ISS now; RTL lockstep in monitor step 4): sampling edges >= 4 clk apart (ISS passes
+;        at 2). Bench figure until measured on hardware: <= 8 MHz. TS = 1: data held >= 14 clk after each sampling
+;        edge (1.78 MHz at 50 % duty)
+; pads: SCK and data pass the same 2-FF synchronizer; the data bit is the synchronized level in the clock the SCK edge
+;        is seen, i.e. the pad level at the first clk edge after the SCK edge, or the second one if that edge was
+;        metastable: 0-40 ns after the SCK pad edge. Data must therefore hold >= 40 ns + skew after the sampling edge
+;        (setup is free: the target launches half a period earlier). Assumed SCK-to-data skew at the pads <= 5 ns
+;        (pad delay mismatch + board routing + the target's output skew). At 12.5 MHz the target holds data for
+;        T/2 = 40 ns, so only its clock-to-out delay is left as margin; at 8 MHz the margin is 62.5 - 40 - 5 = 17.5 ns
 ; pins (both engines, inputs only, no .pad: every pad stays en = 0): p0 = SCK (uio[3]), p1 = CS (uio[0]),
 ;       p3 = data: MOSI (uio[1]) on ENG_MOSI, MISO (uio[2]) on ENG_MISO
 ; modes: 0 and 3 as written; 1 and 2 with MODE12 = 1 (SCK inverted in BIND01: the sampling edge is the logical rise)
