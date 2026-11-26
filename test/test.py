@@ -555,3 +555,87 @@ async def test_random_system_vs_iss(dut):
     for s in range(base, base + seeds):
         cov = await random_system(dut, s, nclk, undef=bool(s & 1))
         cocotb.log.info("seed %d: %s", s, cov)
+
+
+@cocotb.test()
+async def test_pio_link_b4(dut):
+    # host/jspe.py PIO programs on sw/pio_emu.py (sys = 2 x clk, 2-cycle input sync) drive H_RX and decode H_TX at
+    # LINK B = 4 on the RTL: load + read-back, H_RDY back-pressure on a stopped stream, drop + RUN, echo. Emulated.
+    from jspe_asm import assemble_text
+    from jspe_iss import play_bin
+    sys.path.insert(0, os.path.join(ROOT, "sw", "tests"))
+    import fake_rp2
+    from pio_emu import SM
+    fake_rp2.install(None)
+    import jspe
+    tx, rx = jspe.pio_progs()
+    h = await start(dut)
+    await h.wrreg(0x01, 2)
+    await ClockCycles(dut.clk, 40)
+    h.B = 4
+    st = {"tx": SM(tx.words, out_base=20, set_base=20, in_base=38, levels={20: 1})}
+    rxsm = SM(rx.words, in_base=37, jmp_pin=37)
+    hist, q, got, rdy = [(1, 0)] * 2, [], [], []
+
+    def put(bs, force=1):
+        q.extend(b << 1 | force for b in bs)
+
+    async def run(n, until=None):
+        for _ in range(n):
+            await FallingEdge(dut.clk)
+            uo = int(dut.uo_out.value)
+            rdy.append(uo >> 5 & 1)
+            for _ in range(2):
+                hist.append((uo >> 4 & 1, uo >> 5 & 1))
+                lv = dict(zip((37, 38), hist.pop(0)))
+                if q and len(st["tx"].txf) < 4:
+                    st["tx"].put(q.pop(0))
+                st["tx"].step(lv.get)
+                rxsm.step(lv.get)
+                while rxsm.rxf:
+                    got.append(rxsm.rxf.popleft() >> 24)
+            h.set_ui(3, st["tx"].levels[20])
+            if until and until():
+                return
+
+    def parsed():
+        p = jspe.Parser()
+        p.feed(bytes(got))
+        return p
+
+    put([ESC, 0x74])
+    await run(400, lambda: len(got) >= 4)
+    assert got == [ESC, 0xC4, ID & 0xFF, ID >> 8], got
+    img = assemble_text(".engine 0\n.entry l\n.code\nl: @hrx : pull R0\n   @htx : push R0\n   jmp l\n")
+    for op in play_bin(img.bin_bytes()):
+        put(op)
+    words = [(0x9E37 * k) & 0xFFFF for k in range(32)]
+    put([ESC, 0x70, 200, 0, 31] + [x for w in words for x in (w & 0xFF, w >> 8)])
+    del got[:]
+    put([ESC, 0x71, 200, 0, 31])
+    await run(20000, lambda: len(got) >= 66)
+    assert len(got) == 66 and got[:2] == [ESC, 0xC1], got
+    assert [got[2 + 2 * k] | got[3 + 2 * k] << 8 for k in range(32)] == words
+    del got[:]
+    put([ESC, 0x21, ESC, 0x00, ESC, 0x00])          # STOP E0, SEL 0 twice
+    data = list(range(0x40, 0x48))
+    put(data, force=0)
+    await run(1500)
+    assert rdy[-1] == 1 and st["tx"].stalled and len(q) + len(st["tx"].txf) >= 3, (rdy[-1], len(q))
+    assert not got, got                               # no OVR notice: nothing dropped
+    q.clear()                                          # host drops the held bytes (TX restart, PioPort.cmd_noflow)
+    st["tx"] = SM(tx.words, out_base=20, set_base=20, in_base=38, levels={20: 1})
+    put([ESC, 0x31])                                   # RUN: the echo drains the accepted bytes
+    await run(1000)
+    acc = bytes(parsed().rx.get(0, b""))
+    assert acc == bytes(data[:len(acc)]) and 3 <= len(acc) <= 4, acc
+    more = [ESC] + list(range(0x80, 0x90)) + [ESC]
+    put([ESC, 0x00, ESC, 0x00])
+    for b in more:
+        if b == ESC:
+            put([ESC])                                 # literal: first ESC forced, second waits for H_RDY
+        put([b], force=0)
+    await run(3000)
+    p = parsed()
+    assert bytes(p.rx[0]) == acc + bytes(more) and not p.notes, (p.rx, p.notes)
+    assert 1 in rdy
