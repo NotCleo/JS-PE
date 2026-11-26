@@ -13,12 +13,18 @@
 ;       prefetched and armed 1 clk after the rise capture, but after the fall capture the 4 pushes + jmp (~4 clk each)
 ;       run before the rise guard is armed again (EXT splits them: 2 pushes after each capture). Short low pulses:
 ;       INV = 1 (BIND invert) swaps the roles: low >= 1 clk, high >= 22 clk; records are then high, low. A shorter phase is
-;       captured late and reads the time since its edge: a reading below the minimum means "shorter, length unknown"
-;       (the next phase stays exact: the timer restarted at the true edge). Pulses < 1 clk may vanish (synchronizer).
+;       captured late; readings <= the minimum (low <= 22, EXT low <= 14 / high <= 10) mean "possibly shorter, length
+;       unknown": a rise in the first clock after a fall does not restart the timer (swin: T = C), so a 1-clk low reads
+;       21-22 clk; an unflagged low reading needs a low >= 24 clk. Pulses < 1 clk may vanish (synchronizer). PRE > 0: the same window lasts one step, so a phase of
+;       <= 1 step reads 1 step and the next phase includes it (host flags both).
 ; EXT = 1: an edge 0-13 clk after a wrap is captured after the wrap call: -12 .. +13.5 clk; host flags readings with
 ;       wraps >= 1 and 0x10000 - T <= 14.
-; rate: 4 bytes per period: <= 78 k periods/s at B = 16, 312 k with the PIO link (B = 4); a full FIFO drops bytes
-;       and sets OVR (host notice), never a late capture.
+; rate: one record (4 bytes) per period, pushed at the logical fall; the 4-entry TX FIFO holds one record, so
+;       consecutive logical falls must be at least one record's link time apart: 40 B clk (640 at B = 16, 160 with
+;       the PIO link, B = 4), up to 100 B with escapes (a data byte 0x1B is sent as ESC 0x1B) and a stream change
+;       (ESC e), plus the same again for each other engine streaming on the link (HOSTIF 4: up to 4 entries per turn).
+;       On average <= 78 k / 312 k periods/s. Else bytes are dropped and OVR is set (host notice ESC 0x80|e), never a
+;       late capture.
 
 .equ PRE,    0                  ; timer prescale 0, 1, 2 = /1, /16, /256 (EXT = 0 only)
 .equ EXT,    0                  ; 1 = count wraps: phases of any length at 1 clk
@@ -33,6 +39,8 @@
         mov   C, R0                     ; swin: restart only while T < C, i.e. after the first step
         li    R0, #MPIN | (INV << 5)
         wcfg  BIND01, R0
+        li    R0, #0
+        tset  R0                        ; T is not reset (ARCH 11): defined 0, stopped, before the first capture
 .if EXT
         li    R0, #0x0C00               ; TCFG: sync on both edges, periodic, /1
         wcfg  TCFG, R0

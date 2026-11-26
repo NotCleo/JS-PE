@@ -1,9 +1,10 @@
 ; nec.s - NEC IR receiver: leader, 32-bit frame, repeat code (measure_design.md)
-; words: 29 | engines: 1 | timer prescale 256 at 50 MHz (5.12 us steps)
+; words: 30 | engines: 1 | timer prescale 256 at 50 MHz (5.12 us steps)
 ; pins: p0 = IR receiver module output (ui_in[NPIN], active low, 38 kHz demodulated; inverted by BIND: mark = 1)
 ; host: per frame 4 bytes as received (LSB first): address, ~address, command, ~command (host checks the
 ;       complements; extended NEC: 16-bit address). evt 1 = repeat code (key held). evt 2 = frame broken off (a mark
-;       end missing for 3 ms inside the 32 bits): the partial frame is dropped.
+;       end missing for 3 ms inside the 32 bits): the partial frame is dropped; evt 2 right after 4 bytes = the stop
+;       mark end was missing, the 32 bits are complete.
 ; timing (nominal 562.5 us unit): leader mark >= 6.75 ms (9 ms nominal; no upper limit); leader space < 1.69 ms:
 ;       ignored, < 3.375 ms: repeat (2.25 ms), else frame (4.5 ms). Bit = space after a mark, sampled 0.84 ms after
 ;       the mark end: next mark already on = 0 (0.5625 ms space), still space = 1 (1.6875 ms). Margins: a 0 needs
@@ -41,9 +42,10 @@
         mov   P, R0
         li    R2, #BITTO
         li    R0, #LMIN
-.entry idle
+.entry start
 .code
 .org ORG
+start:  watch #0                        ; a re-RUN after a STOP mid-frame: watcher 0 off (wen survives STOP)
 idle:   @rise p0 : tset R0              ; mark start: one-shot, T = 0 after LMIN steps
         @fall p0 : mov R1, T            ; mark end
         tset  P                         ; space timer: T = 0 after SPMAX steps

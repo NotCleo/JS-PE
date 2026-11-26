@@ -29,6 +29,13 @@ def test_meter_decode_inverted_and_short():
     assert [p[0] for p in got] == [w[0] for w in want] and all(abs(p[1] - w[1]) <= 1 for p, w in zip(got, want))
     got = meter_run([500, 500, 400, 5, 95, 500])                # 5-clk low: flagged short
     assert [p[2] for p in got] == [None, None, None, "short", None, None]
+    got = meter_run([500, 500, 400, 1, 99, 500])                # 1-clk low reads 21-22 (swin window): flagged
+    assert got[3][2] == "short" and got[2][2] is None and got[4][2] is None
+
+
+def test_meter_decode_prescale_short_step():
+    got = meter_run([3000, 3000, 10, 3000, 3000, 3000], PRE=1)  # 10 clk < 1 step: short, the next phase suspect
+    assert [p[2] for p in got] == [None, None, "short", "suspect", None, None]
 
 
 def test_meter_decode_ext_wraps():
@@ -71,5 +78,12 @@ def test_choose():
     assert measure.choose(1e6) == ("freq", None, None)
     assert measure.choose(40e3) == ("meter", 0, 0) and measure.choose(60e3) == ("freq", None, None)
     assert measure.choose(60e3, b=4) == ("meter", 0, 0) and measure.choose(250e3, b=4) == ("freq", None, None)
-    assert measure.choose(500) == ("meter", 1, 0) and measure.choose(10) == ("meter", 2, 0)
-    assert measure.choose(1) == ("meter", 0, 1)
+    assert measure.choose(500) == ("meter", 1, 0) and measure.choose(10) == ("meter", 0, 1)
+    assert measure.choose(1) == ("meter", 0, 1) and measure.choose(100) == ("meter", 0, 1)
+    assert measure.step_up(0, 0) == (1, 0) and measure.step_up(2, 0) == (0, 1)
+
+
+def test_autobaud_record_resync():
+    ent = [0x41, 0x1A, 0x00, 0x20, 0x00, 0x42]               # stale byte before the record BIT 26, FRAC 32, PRE 0
+    r = measure.autobaud(ent)
+    assert r["bit"] == 26.125 and r["chars"] == [(0x42, False)]

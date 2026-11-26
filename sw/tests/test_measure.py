@@ -185,7 +185,7 @@ def run_freq(period, high, ph=0, fr=0.3, gate=5000, windows=3, pre=0):
             ev += 1
             continue
         b.append(v)
-        if len(b) == 5:
+        if len(b) == 4:
             s, r0 = b[0] | b[1] << 8, b[2] | b[3] << 8
             out.append((bin(s).count("1") + 16 * r0, ev))
             b, ev = [], 0
@@ -207,6 +207,14 @@ def test_freq_exact(period):
         for fr in (0.1, 0.6):
             for n, ev in run_freq(period, period / 2, ph, fr):
                 assert ev == 0 and in_bound(n, 5000 / period)
+
+
+def test_freq_tick_between_add_and_adc():
+    # reviewer D224: a gate tick between `add S, #1` and `adc R0, R2` lost 16 edges unreported; gate lengths swept
+    # so the tick lands on every point of the pass
+    for g in range(300, 700, 7):
+        for n, ev in run_freq(7, 3.5, g % 4, 0.3, gate=g, windows=4):
+            assert ev == 0 and in_bound(n, g / 7), (g, n)
 
 
 @pytest.mark.parametrize("high", [1.0, 19.0])
@@ -294,7 +302,7 @@ def nec_bytes(a, cmd):
 
 
 def test_nec_size():
-    assert len(prog("nec").words) == 29
+    assert len(prog("nec").words) == 30
 
 
 @pytest.mark.parametrize("jit", [0.0, 0.1])
@@ -346,11 +354,16 @@ def run_ab(bit, chars, ph=0, gap_after_sync=0.0, pre_chars=(), t0=40.3):
 
 
 def ab_check(out, bit, chars):
-    k = out.index(("evt", 4))
-    b = out[k + 1:k + 5]
+    b = out[:4]                                 # lock record: BIT lo, hi, FRAC, PRE
+    if any(isinstance(x, tuple) for x in b) or len(b) < 4:
+        return False, None
     tc = b[2] | b[3] << 8
     mean = ((b[0] | b[1] << 8) + (tc & 0xFF) / 256) * 16 ** (tc >> 8)
-    return out[:k] == [] and out[k + 5:] == chars and abs(mean - bit) <= 1 / 8 * 16 ** (tc >> 8) + 0.13, mean
+    return out[4:] == chars and abs(mean - bit) <= 1 / 8 * 16 ** (tc >> 8) + 0.13, mean
+
+
+def test_autobaud_size():
+    assert len(prog("autobaud").words) == 75
 
 
 @pytest.mark.parametrize("baud", [1000000, 921600, 460800, 115200, 57600, 9600])
@@ -382,7 +395,7 @@ def test_autobaud_too_fast_remeasures():
     ts = [e[0] for e in edges]
     simulate(c, int(d.end - c.cycle) + 120, lambda t, ch: (edges[bisect.bisect_right(ts, t) - 1][1] if t >= ts[0] else 1, 0))
     out = [("evt", v & 0xFF) if v & 0x100 else v for _, v in c.host_out[0]]
-    assert out[0] == ("evt", 3) and out[1] == ("evt", 4) and out[-1] == 0x3C
+    assert out[0] == ("evt", 3) and len(out) == 6 and out[-1] == 0x3C
 
 
 def ab_gap_ok(bit, g):

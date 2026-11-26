@@ -15,10 +15,11 @@ def _is_ev(x, code=None):
 
 def meter(ent, pre=0, ext=0, inv=0):
     # -> [(level, clk, flag)]: level = pad level of the phase, clk = length (None = over range), flag None, "short"
-    # (below the minimum: length unknown, shorter) or "wrap" (EXT: edge within 14 clk after a wrap, +-13.5 clk).
+    # (reading <= the minimum: possibly a shorter phase, length unknown; PRE > 0: <= 1 step), "suspect" (PRE > 0: the
+    # phase after a short one includes it) or "wrap" (EXT: edge within 14 clk after a wrap, +-13.5 clk).
     # The first reading (before the timer started) is dropped.
     hmin, lmin = (10, 14) if ext else (1, 22)
-    out, w, b, k = [], 0, [], 0
+    out, w, b, k, prev_short = [], 0, [], 0, False
     for x in ent:
         if _is_ev(x, 1):
             w += 1
@@ -43,10 +44,16 @@ def meter(ent, pre=0, ext=0, inv=0):
         else:
             clk = rem if pre == 0 else (rem - 0.5) * 16 ** pre
         flag = None
-        if clk is not None and clk < (hmin if logical else lmin) - 1:
+        m = hmin if logical else lmin
+        if pre and clk is not None and rem <= 1:
             flag = "short"
+        elif not pre and clk is not None and m > 1 and clk <= m:
+            flag = "short"
+        elif prev_short:
+            flag = "suspect"
         elif ext and w and rem <= 14:
             flag = "wrap"
+        prev_short = bool(pre) and flag == "short"
         out.append((logical ^ inv, clk, flag))
         w = 0
     return out
@@ -75,7 +82,7 @@ def freq(ent):
         if _is_ev(x):
             continue
         b.append(x)
-        if len(b) == 5:
+        if len(b) == 4:
             s = b[0] | b[1] << 8
             out.append((bin(s).count("1") + 16 * (b[2] | b[3] << 8), lost))
             b, lost = [], False
@@ -117,36 +124,47 @@ def nec(ent):
 
 def autobaud(ent, hz=HZ):
     # -> {"bit": mean bit in clk, "baud", "tcfg", "chars": [(value, framing_error)], "refused": evt 3 count}
+    # lock record = the first 4 data bytes after the start or an evt 3 (BIT lo, hi, FRAC, PRE)
+    # A record failing PRE <= 2 and FRAC & 0x1F == 0 is resynced one byte later (a stale or dropped byte).
     r = {"bit": None, "baud": None, "tcfg": None, "chars": [], "refused": 0}
-    k, n = 0, len(ent)
-    while k < n:
-        x = ent[k]
+    rec = []
+    for x in ent:
         if _is_ev(x, 3):
             r["refused"] += 1
-        elif _is_ev(x, 4) and k + 4 < n:
-            b = ent[k + 1:k + 5]
-            tc = b[2] | b[3] << 8
-            r["bit"] = ((b[0] | b[1] << 8) + (tc & 0xFF) / 256) * 16 ** (tc >> 8)
-            r["baud"] = hz / r["bit"]
-            r["tcfg"] = tc
-            k += 4
+            rec, r["chars"], r["bit"] = [], [], None
+        elif r["bit"] is None:
+            if not _is_ev(x):
+                rec.append(x)
+            if len(rec) == 4 and (rec[3] > 2 or rec[2] & 0x1F):
+                rec = rec[1:]
+            if len(rec) == 4:
+                tc = rec[2] | rec[3] << 8
+                r["bit"] = ((rec[0] | rec[1] << 8) + (tc & 0xFF) / 256) * 16 ** (tc >> 8)
+                r["baud"] = hz / r["bit"]
+                r["tcfg"] = tc
         elif _is_ev(x, 1) and r["chars"]:
             v, _ = r["chars"][-1]
             r["chars"][-1] = (v, True)
         elif not _is_ev(x):
             r["chars"].append((x, False))
-        k += 1
     return r
 
 
 def choose(f_est, b=16, hz=HZ):
     # method for a signal near f_est Hz (from a 10 ms freq.s window): period capture while the link carries every
     # period (4 bytes/period, 10 B clk per byte, 64 % margin): error 1 clk / T at any f; else gate counting: 1 edge / T.
-    # -> ("meter", PRE, EXT) or ("freq", None, None)
+    # -> ("meter", PRE, EXT) or ("freq", None, None). f_est < 200 Hz (<= 1 edge in 10 ms) is no estimate: EXT.
     if f_est > 0.64 * hz / (40 * b):
         return ("freq", None, None)
-    per = hz / f_est if f_est > 0 else float("inf")
+    if f_est < 200:
+        return ("meter", 0, 1)
+    per = hz / f_est
     for pre in (0, 1, 2):
         if per < 65536 * 16 ** pre:
             return ("meter", pre, 0)
     return ("meter", 0, 1)
+
+
+def step_up(pre, ext):
+    # meter reported over range (clk None): next prescale, then EXT (no upper bound)
+    return (pre + 1, 0) if not ext and pre < 2 else (0, 1)

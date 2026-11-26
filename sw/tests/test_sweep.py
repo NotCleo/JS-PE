@@ -105,6 +105,11 @@ def stress(name, img, ph, seed, live):
         return can_stress(img, ph, r)
     if name == "nec":
         return nec_stress(img, ph, r)
+    if name == "freq":                                 # 3-clk square: rises merge, the evt 2 path
+        c = boot(img, ph)
+        n, t0, fr = 7000, c.cycle + 20, r.random()
+        simulate(c, n, lambda t, ch: ((1 if (t - t0 - fr) % 3 < 1.5 and t > t0 else 0) | 0x08, 0))
+        return c
     return None
 
 

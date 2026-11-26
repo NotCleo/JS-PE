@@ -6,9 +6,13 @@
 ;       between a capture and its sum: the timer was just restarted). Sum of 4 intervals = 8 bits = D clk (32 bits).
 ;       PRE = 0 / 1 / 2 for D < 2^19 / 2^23 / more; Ds = D >> 4 PRE; BIT = Ds >> 3, FRAC = (Ds & 7) << 5: mean bit
 ;       = BIT + FRAC / 256 steps, the sender's own rate to +-1 clk over 8 bits (a +-2 % sender is measured, not an error).
-; host: evt 4 + BIT lo, hi, FRAC, PRE (TCFG) once locked, then one byte per character as uart_rx (evt 1 = framing
+;       Below 1526 baud (intervals > 65536 clk) a fall inside the wrap call (<= 14 clk) is captured late: D off by
+;       <= 14 clk (< 2e-5 relative).
+; host: lock record = the first 4 bytes after the start or an evt 3: BIT lo, hi, FRAC, PRE (TCFG), then one byte
+;       per character as uart_rx (evt 1 = framing
 ;       error / break). evt 3 = BIT < 15 (faster than 3.3 Mbaud: not a 0x55 at a supported rate): measures again.
-;       The 0x55 itself is not delivered.
+;       The 0x55 itself is not delivered. The record has no marker: re-lock = STOP, RST of the engine (empties its
+;       FIFO), reload, RUN; host/measure.py resyncs if PRE > 2 or FRAC's low 5 bits are set.
 ; departures from the first design (D221 -> D223):
 ;       1. no validity check of the sync character (bit 8 low, stop high): at 1 Mbaud the rate is still being computed
 ;          while those bits pass. Checked only: 5 falls with a rise between each, BIT >= 15. A wrong sync character
@@ -36,7 +40,8 @@
 .entry ab
 .code
 .org ORG
-ab:     li    R0, #0xFFFF
+ab:     wrst                            ; a re-RUN may have stopped the engine mid-character (N != 0)
+        li    R0, #0xFFFF
         mov   P, R0
         li    R0, #0x0800               ; TCFG: hard sync on falls of p0, periodic, /1
         wcfg  TCFG, R0
@@ -87,8 +92,7 @@ fr:     mov   C, R1
         cmp   R2, #15
         jnc   bad
         wcfg  TCFG, R1
-        evt   #4
-        push  R2
+        push  R2                        ; lock record: 4 entries, fits the empty TX FIFO (no event marker)
         pushh R2
         push  R1
         pushh R1

@@ -2,9 +2,10 @@
 ; words: 17 | engines: 1
 ; pins: p0 = input (ui_in[FPIN]; FPIN 8-15 = uio_in[0..7]), never driven; p1 = constant 1 (shifter input)
 ; window: tock to tick of a one-shot timer = GATE * 16^PRE clk exactly; defaults 1 ms (PRE 0), 10 ms (PRE 1,
-;         GATE 31250), 99.9987 ms (PRE 2, GATE 19531). Gap between windows: handler + K + 1 steps (dead, not counted)
-; host: per window 5 bytes: S lo, hi, R0 lo, hi, 0; edges = popcount(S) + 16 * R0 (< 2^20: 100 ms only to 10.4 MHz).
-;       evt 2 before them: OVR in that window (two rises merged: edges lost). The first window follows the RUN.
+;         GATE 31250), 99.9987 ms (PRE 2, GATE 19531). Gap between windows: handler (waits for FIFO room) + K + 1 steps (dead, not counted)
+; host: per window 4 bytes: S lo, hi, R0 lo, hi; edges = popcount(S) + 16 * R0 (< 2^20: 100 ms only to 10.4 MHz).
+;       evt 2 before them: OVR in that window (two rises merged: edges lost). The host drops the first record after a
+;       RUN: it may carry a stale OVR or a stale count from before the RUN.
 ; accuracy (ISS, 4 slot phases): window exact; count within -1 .. +1 edge of window / period (a rise latched in the
 ;       pass overhead when the tick aborts is not counted)
 ; limits (ISS): period >= 7 clk (<= 7.1 MHz), high >= 1 clk and low >= 1 clk (20 ns, 2-FF synchronizer); the
@@ -40,14 +41,14 @@
 .entry clr
 .code
 .org ORG
-gate:   jnovr g1                        ; watcher 0, tick: the window ended (count loop aborted)
+gate:   adc   R0, R2                    ; watcher 0, tick: window over. CY = 1 only if the tick cut add S / adc R0:
+        jnovr g1                        ;   count that pass here (else 16 edges lost unreported, reviewer D224)
         ovclr
-        evt   #2                        ; two rises merged in this window
-g1:     push  S
-        pushh S
-        push  R0
-        pushh R0
-        push  R2
+        @htx : evt #2                   ; two rises merged in this window
+g1:     @htx : push S                   ; blocks: the next window starts after the record is out (dead time)
+        @htx : pushh S
+        @htx : push R0
+        @htx : pushh R0
 clr:    li    S, #0
         wrst                            ; the aborted word restarts
         li    R0, #0
