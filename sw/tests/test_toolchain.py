@@ -72,7 +72,7 @@ def test_mem_limit_and_overlaps():
 def memmap_regions():
     import re
     m = {k: int(v) for k, v in re.findall(r"^\.equ\s+(\w+),\s*(\d+)", open(os.path.join(PROG, "cleo_mem.inc")).read(), re.M)}
-    return m, [(m["USB_BUF"], m["USB_BUF_N"]), (m["FAULT_W"], m["FAULT_N"]), (m["BR_MBOX"], 1), (m["BR_RING"], m["BR_RING_N"])]
+    return m, [(m["SWD_BOX"], m["SWD_BOX_N"]), (m["USB_BUF"], m["USB_BUF_N"]), (m["FAULT_W"], m["FAULT_N"]), (m["BR_MBOX"], 1), (m["BR_RING"], m["BR_RING_N"])]
 
 
 def test_memmap_disjoint_above_code():
@@ -89,8 +89,8 @@ def test_reserve_and_include_overlap_check():
         Assembler([(br[0], open(br[0]).read()), ("evil.s", inc + ".engine 2\n.reserve BR_MBOX - 1, 2\n")]).run()
     with pytest.raises(AsmError, match="address %d reserved by evil.s" % m["FAULT_W"]):
         Assembler([("evil.s", inc + ".reserve FAULT_W, FAULT_N\n"), ("code.s", inc + ".org FAULT_W\n.word 0\n")]).run()
-    with pytest.raises(AsmError, match="reserved word %d already used by code.s" % m["MEM_DATA"]):
-        Assembler([("code.s", ".org %d\nnop\n" % m["MEM_DATA"]), ("usb.s", inc + ".reserve USB_BUF, USB_BUF_N\n")]).run()
+    with pytest.raises(AsmError, match="reserved word %d already used by code.s" % m["USB_BUF"]):
+        Assembler([("code.s", ".org %d\nnop\n" % m["USB_BUF"]), ("usb.s", inc + ".reserve USB_BUF, USB_BUF_N\n")]).run()
     img = assemble_text(inc + ".reserve FAULT_W, 1\n.org FAULT_W\n.word 7\n")      # own region: may store
     assert img.words[m["FAULT_W"]] == 7
     with pytest.raises(AsmError, match="cannot open nothere.inc"):

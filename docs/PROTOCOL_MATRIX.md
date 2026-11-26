@@ -118,26 +118,27 @@ Every Cleo cell was checked against [CAPABILITY.md](CAPABILITY.md), the program 
 
 | Parameter | Options in practice | Cleo |
 |---|---|---|
-| Signals | TCK, TMS, TDI, TDO, optional TRST | PROG |
-| Roles | Controller (probe), target (TAP emulator), monitor | PROG all |
-| TAP state machine | 16 states; reset by TRST or 5 × TMS = 1 | PROG |
-| Instructions | BYPASS, EXTEST, SAMPLE/PRELOAD, IDCODE, USERCODE, private | PROG (emulator: configurable IR/DR lengths and values) |
-| IR/DR lengths, chains | Any length; multiple TAPs, BYPASS the others | PROG |
-| TCK rate | kHz to tens of MHz | PROG (controller a few MHz; target limited by input sync like the SPI target) |
-| Variants | RTCK, cJTAG (IEEE 1149.7), JTAG-to-SWD switch | PROG |
+| Signals | TCK, TMS, TDI, TDO, optional TRST | DONE (controller: TRST as an RP2350 GPIO; emulator: TRST input) |
+| Roles | Controller (probe), target (TAP emulator), monitor | DONE controller (jtag_ctrl.s), TAP emulator (jtag_tap.s) · PROG monitor |
+| TAP state machine | 16 states; reset by TRST or 5 × TMS = 1 | DONE both roles (host/debug.py walks the TAP; emulator: one guarded jump per state, TRST and 5 × TMS = 1) |
+| Instructions | BYPASS, EXTEST, SAMPLE/PRELOAD, IDCODE, USERCODE, private | DONE emulator: IDCODE (32 bits), one user DR (1–16 bits, pushed to the host on Update-DR), BYPASS for every other opcode · PROG boundary-scan instructions (as further user DRs) |
+| IR/DR lengths, chains | Any length; multiple TAPs, BYPASS the others | DONE: controller any length (host splits scans); emulator IR 2–16 bits, exact shift registers; chains tested (2 model TAPs behind the controller; 2 emulator engines in series) |
+| TCK rate | kHz to tens of MHz | DONE controller ≤ 6.25 MHz (BIT 8, TDO window SMP − 3 clk), 4.17 MHz symmetric (I); emulator ≤ 1.39 MHz (2.78 MHz solo slot map) (I); controller → emulator lockstep at 1.25 MHz (R) |
+| Variants | RTCK, cJTAG (IEEE 1149.7), JTAG-to-SWD switch | DONE JTAG-to-SWD sequence (swd_host raw bits) · PROG RTCK, cJTAG (10.1) |
 
 ## 7. SWD (ADIv5/ADIv6)
 
 | Parameter | Options in practice | Cleo |
 |---|---|---|
-| Signals | SWCLK, SWDIO (bidirectional), optional SWO, nRESET | PROG (SWDIO on a uio pin) |
-| Roles | Host, target (DP emulator), monitor, SWO receiver | PROG all |
-| Packet | Request, turnaround, ACK (OK/WAIT/FAULT), 32-bit data + parity | PROG |
-| Line reset / switching | ≥ 50 ones + idle; JTAG-to-SWD 0xE79E; dormant wake-up | PROG |
-| Versions | v1; v2 multidrop (TARGETSEL) | PROG |
-| DP registers | DPIDR, CTRL/STAT, SELECT, RDBUFF; posted AP reads | PROG (emulator) |
-| Error handling | WAIT/FAULT, sticky errors, parity error | PROG |
-| SWO trace | UART/NRZ or Manchester | PART: uart_rx and manchester.s RX decode it unchanged; no SWO-specific test |
+| Signals | SWCLK, SWDIO (bidirectional), optional SWO, nRESET | DONE (SWDIO on a uio pin with a pull-up; nRESET as an RP2350 GPIO) |
+| Roles | Host, target (DP emulator), monitor, SWO receiver | DONE host (swd_host.s), DP emulator (swd_dp.s), SWO NRZ receiver (uart_rx.s) · PROG monitor |
+| Packet | Request, turnaround, ACK (OK/WAIT/FAULT), 32-bit data + parity | DONE both roles |
+| Line reset / switching | ≥ 50 ones + idle; JTAG-to-SWD 0xE79E; dormant wake-up | DONE line reset and JTAG-to-SWD (both roles) · PROG dormant wake-up (host raw bits; emulator does not model dormant state) |
+| Versions | v1; v2 multidrop (TARGETSEL) | DONE v1 · DONE v2 TARGETSEL (host: raw sequence; emulator `MDROP=1`, two DPs on one bus) |
+| DP registers | DPIDR, CTRL/STAT, SELECT, RDBUFF; posted AP reads | DONE emulator: DPIDR, CTRL/STAT (power-up ACK = REQ, WDATAERR, STICKYERR), ABORT, SELECT and AP registers on the host, RDBUFF, posted AP reads · PART RESEND answered as RDBUFF, DPBANKSEL ignored |
+| Error handling | WAIT/FAULT, sticky errors, parity error | DONE host (WAIT retry, FAULT, no reply, read parity check); emulator (WAIT while the host serves an AP access, FAULT on sticky flags, write parity → WDATAERR, protocol error → lockout until line reset) |
+| SWO trace | UART/NRZ or Manchester | DONE NRZ (uart_rx.s unchanged, ITM decoder on the host, ≤ 3.125 Mbaud tested) · PROG Manchester (needs a start-bit hunt, LSB-first variant of manchester.s) |
+| Rate | Probe-defined, typically 1–50 MHz | host ≤ 8.3 MHz (BIT 6; target answer window BIT − 4 clk) (I, R at 781 kHz); emulator ≤ 781 kHz back to back, 1.04 MHz with ≥ 2 idle cycles (I) |
 
 ## 8. PS/2
 
@@ -175,12 +176,12 @@ Program/host only: no change to the RTL, the ISA or the ISS. Status codes as abo
 
 | # | Family | Item | Status |
 |---|---|---|---|
-| 1.1 | Debug | JTAG controller (TAP walk, IR/DR shift streamed from the host) | PROG |
-| 1.2 | Debug | JTAG TAP emulator (IDCODE, BYPASS, IR/DR lengths, chains, TLR by TMS / TRST) | PROG |
-| 1.3 | Debug | SWD host (request, ACK, WAIT/FAULT, parity, line reset, JTAG-to-SWD) | PROG |
-| 1.4 | Debug | SWD DP emulator (DPIDR, CTRL/STAT, SELECT, RDBUFF, WAIT/FAULT, parity error) | PROG |
-| 1.5 | Debug | SWD v2 multidrop (TARGETSEL) | PROG |
-| 1.6 | Debug | SWO receive (UART/NRZ and Manchester, reusing uart_rx / manchester) | PART |
+| 1.1 | Debug | JTAG controller (TAP walk, IR/DR shift streamed from the host) | DONE: jtag_ctrl.s 23 words, ≤ 6.25 MHz (D230) |
+| 1.2 | Debug | JTAG TAP emulator (IDCODE, BYPASS, IR/DR lengths, chains, TLR by TMS / TRST) | DONE: jtag_tap.s 84 words, ≤ 1.39 MHz (D231) |
+| 1.3 | Debug | SWD host (request, ACK, WAIT/FAULT, parity, line reset, JTAG-to-SWD) | DONE: swd_host.s 68 words, ≤ 8.3 MHz (D232) |
+| 1.4 | Debug | SWD DP emulator (DPIDR, CTRL/STAT, SELECT, RDBUFF, WAIT/FAULT, parity error) | DONE: swd_dp.s 188 + 5 box words, ≤ 781 kHz back to back (D233) |
+| 1.5 | Debug | SWD v2 multidrop (TARGETSEL) | DONE: swd_dp.s `MDROP=1` (+16 words), host raw sequence (D233) |
+| 1.6 | Debug | SWO receive (UART/NRZ and Manchester, reusing uart_rx / manchester) | PART: NRZ DONE (uart_rx unchanged, ITM tests); Manchester PROG — measured: manchester.s needs a 0x55 preamble + SFD and is MSB first, SWO Manchester has one start bit and is LSB first (D234) |
 | 2.1 | PS/2 | Device: keyboard and mouse framing, clock generation, request-to-send, ACK | PROG |
 | 2.2 | PS/2 | Host: inhibit, request-to-send, receive, parity/timeout errors | PROG |
 | 3.1 | Ethernet | 10BASE-T normal link pulses | PROG |
@@ -262,6 +263,6 @@ Program/host only: no change to the RTL, the ISA or the ISS. Status codes as abo
 | I2C bus recovery | PROG | PART: host step sequence in the i2c_ctrl.s header; untested |
 | CAN FD no BRS | PART | PROG: nothing of FD is implemented |
 | CAN EOF | PART | PROG: ACK delimiter and EOF both unchecked (can.s limit 4) |
-| SWO | PROG | PART: the existing receivers decode it; no test |
+| SWO | PROG | PART: the existing receivers decode it; no test (2026-11-27: NRZ tested, Manchester does not fit manchester.s framing, D234) |
 | 9-bit multidrop | PROG | PART: 9-bit frames done, address match missing |
 | SPI target response delay | DONE | PART: fixed one-byte latency |

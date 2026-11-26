@@ -1180,3 +1180,90 @@ class SwdTarget:
                 self.dp[a] = v
             self.log.append(("w", ap, a, v))
             self.st = "idle" if self.selected else "lock"
+
+
+class SwdHost:
+    # Host side of SWD in continuous time, online: cycle k = [t0 + kT, t0 + (k+1)T), SWCLK low in its first half
+    # (host data change at the falling edge), high in the second; target data sampled just before the rising edge
+    # (sample="rise") or right after the falling edge (sample="fall", the strict case). ops: ("reset",), ("idle", n),
+    # ("r", ap, a), ("w", ap, a, v[, bad_parity]), ("tsel", v), ("bits", [b]). WAIT is retried (up to `retries`);
+    # results: one entry per r/w: (ack, value, parity_ok). gap = idle cycles after each transaction.
+    def __init__(self, T, ops, t0=20.0, sample="rise", gap=0, retries=200):
+        self.T, self.t0, self.sample, self.gap, self.retries = T, t0, sample, gap, retries
+        self.ops, self.results, self.k, self.drv, self.samp = list(ops), [], -1, None, None
+        self.gen = self._run()
+        self.done_at = None
+        self.waits = 0
+
+    def _txn(self, ap, rnw, a, v=0, badp=0):
+        r = (ap & 1) | (rnw & 1) << 1 | ((a >> 2) & 3) << 2
+        bits = [1, ap & 1, rnw & 1, a >> 2 & 1, a >> 3 & 1, bin(r).count("1") & 1, 0, 1]
+        for b in bits:
+            yield b
+        yield None                                        # turnaround (cycle 8); `x = yield` = sample of that cycle
+        s = []
+        for _ in range(3):
+            s.append((yield None))                        # ACK, cycles 9, 10, 11
+        ack = s[0] | s[1] << 1 | s[2] << 2
+        if ack == 1 and rnw:
+            d = []
+            for _ in range(33):
+                d.append((yield None))                    # data + parity, cycles 12..44
+            yield None                                    # turnaround (45)
+            val = sum(x << i for i, x in enumerate(d[:32]))
+            return ack, val, (bin(val).count("1") & 1) == d[32]
+        yield None                                        # turnaround (12)
+        if ack == 1:
+            for i in range(32):
+                yield v >> i & 1
+            yield (bin(v & 0xFFFFFFFF).count("1") & 1) ^ badp
+        return ack, None, None
+
+    def _run(self):
+        for op in self.ops:
+            if op[0] == "reset":
+                for _ in range(56):
+                    yield 1
+            elif op[0] == "idle":
+                for _ in range(op[1]):
+                    yield 0
+            elif op[0] == "bits":
+                for b in op[1]:
+                    yield b
+            elif op[0] == "tsel":
+                r = [1, 0, 0, 1, 1, 0, 0, 1]                  # DP write 0xC, parity 0
+                for b in r:
+                    yield b
+                for _ in range(5):
+                    yield None
+                for i in range(32):
+                    yield op[1] >> i & 1
+                yield bin(op[1]).count("1") & 1
+            else:
+                for _ in range(self.retries):
+                    res = yield from self._txn(1 if op[1] else 0, int(op[0] == "r"), op[2], *op[3:])
+                    for _ in range(self.gap):
+                        yield 0
+                    if res[0] != 2:
+                        break
+                    self.waits += 1
+                self.results.append(res)
+
+    def at(self, t, line):
+        # SWCLK and host drive (None = released) at time t; line(t) = bus level at a past time t
+        k = int((t - self.t0) // self.T) if t >= self.t0 else -1
+        while self.k < k and self.drv != "end":
+            if self.k < 0:
+                nxt = lambda: next(self.gen)
+            else:
+                sp = self.T / 2 - 0.05 if self.sample == "rise" else 0.05
+                v = line(self.t0 + self.k * self.T + sp)
+                nxt = lambda v=v: self.gen.send(v)
+            try:
+                self.drv = nxt()
+            except StopIteration:
+                self.drv, self.done_at = "end", self.t0 + (self.k + 1) * self.T
+            self.k += 1
+        if k < 0 or self.drv == "end":
+            return 1, None
+        return (0 if t - (self.t0 + k * self.T) < self.T / 2 else 1), self.drv

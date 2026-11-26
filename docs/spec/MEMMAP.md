@@ -6,7 +6,8 @@ The hardware has no fixed regions (ARCH 10). Programs that keep data the host or
 
 | Words | Symbol | Owner | Note |
 |---|---|---|---|
-| 0 … 464 | below `MEM_DATA` | code and `.word` tables of all programs | default `ORG`s as today; word 0 = reset PC (D109) |
+| 0 … 454 | below `MEM_DATA` | code and `.word` tables of all programs | default `ORG`s as today; word 0 = reset PC (D109) |
+| 455 … 464 | `SWD_BOX`, `SWD_BOX_N` | swd_dp (engine 0 at 455, engine 1 at 460) | RDB_L, RDB_H (RP2350-written), ST (both), DL, DH (chip-written); debug_design.md |
 | 465 … 474 | `USB_BUF`, `USB_BUF_N` | usb_ls | IN buffer 7, KEY0, BUFKEY, KEY1; RP2350-written |
 | 475 … 478 | `FAULT_W` + engine, `FAULT_N` | `-D FAULTS=1` variants | one fault word per engine (programs/fault_design.md) |
 | 479 | `BR_MBOX` | bridge_i2c_uart | one-word mailbox |
