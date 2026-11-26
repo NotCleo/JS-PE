@@ -9,6 +9,8 @@
 ;       the mark end: next mark already on = 0 (0.5625 ms space), still space = 1 (1.6875 ms). Margins: a 0 needs
 ;       space <= 0.84 ms < space + next mark, a 1 needs space > 0.84 ms (tested with +-10 % random jitter per edge,
 ;       and +-20 % uniform timing).
+; bound (T6, structured IR stimulus, 4 slot maps x 4 phases): measured = bound on every step, max 30 clk (space end
+;       to the bit loop); no .deadline needed: the shortest gap between events is a 562.5 us mark.
 
 .equ NPIN,   0                  ; pad of the IR receiver output
 .equ CLK_HZ, 50000000

@@ -8,8 +8,12 @@
 ;       = BIT + FRAC / 256 steps, the sender's own rate to +-1 clk over 8 bits (a +-2 % sender is measured, not an error).
 ; host: evt 4 + BIT lo, hi, FRAC, PRE (TCFG) once locked, then one byte per character as uart_rx (evt 1 = framing
 ;       error / break). evt 3 = BIT < 15 (faster than 3.3 Mbaud: not a 0x55 at a supported rate): measures again.
-;       The 0x55 itself is not delivered. A wrong sync character gives a wrong rate: framing errors (evt 1); the host
-;       then RUNs entry `ab` again (or reloads).
+;       The 0x55 itself is not delivered.
+; departures from the first design (D221 -> D223):
+;       1. no validity check of the sync character (bit 8 low, stop high): at 1 Mbaud the rate is still being computed
+;          while those bits pass. Checked only: 5 falls with a rise between each, BIT >= 15. A wrong sync character
+;          gives a wrong rate, seen as framing errors (evt 1) or wrong bytes; the host then RUNs entry `ab` again.
+;       2. timing rule below (the computation runs after the 5th fall, not in the stop bit).
 ; rule: the character after the 0x55 starts >= 140 clk after the 0x55's last fall (the rate is computed meanwhile):
 ;       idle >= 140 - 2 BIT clk after its stop bit, i.e. back to back for BIT >= 70 (<= 714 kbaud), 40 clk (0.8 bit)
 ;       at 1 Mbaud (ISS, 4 slot phases)

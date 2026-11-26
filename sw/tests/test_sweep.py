@@ -3,6 +3,7 @@
 # 0x24 x 4 slot phases; each step is checked against walk_bound for the path taken at the measured wait.
 # Part 2 (contract): every `.assume armed` holds and every stated bound covers the measured delay in the
 # in-contract worst cases (header rates, minimum spacings, +-2 %, jitter).
+import bisect
 import os
 import random
 import pytest
@@ -23,7 +24,7 @@ PROGS = [("uart_tx", {"ENG": 0}), ("uart_rx", {"ENG": 0}), ("spi_ctrl", {"ENG": 
          ("manchester", {"ENG_TX": 0, "ENG_RX": 1, "CVCHK": 0}),
          ("can", {"ENG_TX": 0, "ENG_RX": 1}), ("can", {"ENG_TX": 1, "ENG_RX": 0}),
          ("meter", {"ENG": 0}), ("meter", {"ENG": 0, "EXT": 1}), ("freq", {"ENG": 0, "GATE": 2000}),
-         ("autobaud", {"ENG": 0})]
+         ("autobaud", {"ENG": 0}), ("nec", {"ENG": 0, "CLK_HZ": 200000, "PRE": 0})]
 
 
 def never(img, a):
@@ -102,7 +103,24 @@ def stress(name, img, ph, seed, live):
         return c
     if name == "can":
         return can_stress(img, ph, r)
+    if name == "nec":
+        return nec_stress(img, ph, r)
     return None
+
+
+def nec_stress(img, ph, r):
+    # structured IR traffic (CLK_HZ 200 kHz, PRE 0: 5 us steps as at 50 MHz / 256): frames with +-10 % jitter per
+    # edge, a repeat code, a frame cut after a random bit (timeout path), a short leader, a short leader space
+    from test_measure import nec_edges
+    c = boot(img, ph)
+    items = [("frame", r.randrange(256), r.randrange(256)), ("repeat",),
+             ("frame", r.randrange(256), r.randrange(256), r.randint(1, 31)),
+             ("lead", 4e-3, 4.5e-3), ("lead", 9e-3, 1e-3), ("frame", r.randrange(256), r.randrange(256))]
+    edges, end = nec_edges(items, 200000, c.cycle + 20 + r.random(), r, jit=0.1)
+    ts = [e[0] for e in edges]
+    simulate(c, int(end - c.cycle) + 10, lambda t, ch: ((edges[bisect.bisect_right(ts, t) - 1][1] if t >= ts[0]
+                                                          else 1) | 0x08, 0))
+    return c
 
 
 def can_stress(img, ph, r):
