@@ -25,7 +25,8 @@ PROGS = [("uart_tx", {"ENG": 0}), ("uart_rx", {"ENG": 0}), ("spi_ctrl", {"ENG": 
          ("can", {"ENG_TX": 0, "ENG_RX": 1}), ("can", {"ENG_TX": 1, "ENG_RX": 0}),
          ("meter", {"ENG": 0}), ("meter", {"ENG": 0, "EXT": 1}), ("freq", {"ENG": 0, "GATE": 2000}),
          ("autobaud", {"ENG": 0}), ("nec", {"ENG": 0, "CLK_HZ": 200000, "PRE": 0}),
-         ("jtag_ctrl", {"ENG": 0}), ("jtag_tap", {"ENG": 0})]
+         ("jtag_ctrl", {"ENG": 0}), ("jtag_tap", {"ENG": 0}),
+         ("swd_host", {"ENG": 0})]
 
 
 def never(img, a):
@@ -109,6 +110,9 @@ def stress(name, img, ph, seed, live):
     if name == "jtag_tap":
         from test_jtag import emu_run, tck_bits, session
         return emu_run(tck_bits(session()), r.choice((20, 36, 100)), ph, img=img, phase=r.random())[0]
+    if name == "swd_host":
+        from test_swd import scenario
+        return scenario(img, ph, r.randrange(4))
     if name == "jtag_ctrl":
         from test_jtag import scenario
         return scenario(img, ph, r.randrange(4))

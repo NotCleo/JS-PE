@@ -1049,3 +1049,134 @@ class JtagDriver:
 
     def sample(self, tdo_changes, init=1):
         return [level_at(tdo_changes, t - 1e-9, init) for t in self.rise_t]
+
+
+# ---------------- SWD (ADIv5 wire protocol) ----------------
+def parity32(v):
+    return bin(v & 0xFFFFFFFF).count("1") & 1
+
+
+class SwdTarget:
+    # Target side of SWD on a shared line: samples host bits at SWCLK rise, drives its bits `delay` clk after a rise.
+    # Line reset = >= 50 host ones (then a 0); after a protocol error it waits for one. Registers: dp {A: value},
+    # ap {A: value} (reads return the current value, not posted). ack(req) -> 1/2/4 or None (no reply);
+    # bad_parity(req) -> True corrupts the read parity. multidrop: TARGETSEL (DP write 0xC) after a line reset gets no
+    # ACK and selects when the data equals tsel.
+    def __init__(self, dpidr=0x2BA01477 ^ 0x11111111, delay=1.0, ack=None, bad_parity=None, multidrop=False,
+                 tsel=0x01002927):
+        self.dp = {0: dpidr, 4: 0, 8: 0, 0xC: 0}
+        self.ap = {}
+        self.delay, self.ackf, self.badp = delay, ack or (lambda r: 1), bad_parity or (lambda r: False)
+        self.multidrop, self.tsel, self.selected = multidrop, tsel, not multidrop
+        self.ch, self.prev, self.ones = [], None, 0
+        self.st, self.buf, self.k = "lock", [], 0
+        self.log, self.resets, self.errors = [], 0, []
+        self.reset_state = True
+
+    def drive(self, t, v):
+        self.ch.append((t + self.delay, v))
+
+    def level(self, t):
+        return level_at(self.ch, t, None)
+
+    def edge(self, t, swclk, host):
+        # host: host-driven level or None (released); call on every pad change
+        if self.prev is not None and swclk and not self.prev:
+            self.rise(t, host)
+        self.prev = swclk
+
+    def rise(self, t, b):
+        if b == 1:
+            self.ones += 1
+        elif b == 0:
+            if self.ones >= 50:
+                self.resets += 1
+                self.st, self.reset_state = "idle", True
+                if self.multidrop:
+                    self.selected = False
+                self.ones = 0
+                return
+            self.ones = 0
+        st = self.st
+        if st == "lock":
+            return
+        if st in ("idle", "req") and b == 1 and self.ones >= 8:   # a line reset in progress
+            self.st = "lock"
+            return
+        if st == "idle":
+            if b == 1:
+                self.st, self.buf = "req", [1]
+            return
+        if st == "req":
+            self.buf.append(b)
+            if len(self.buf) < 8:
+                return
+            r = self.buf
+            ok = r[6] == 0 and r[7] == 1 and (r[1] ^ r[2] ^ r[3] ^ r[4]) == r[5]
+            if not ok:
+                self.errors.append("request")
+                self.st = "lock"
+                return
+            self.req = (r[1], r[2], (r[3] | r[4] << 1) << 2)
+            ap, rnw, a = self.req
+            if self.multidrop and self.reset_state and not ap and not rnw and a == 0xC:
+                self.st, self.k, self.acks = "tsel", 0, None
+                return
+            if self.multidrop and not self.selected:
+                self.st = "lock"
+                return
+            if self.reset_state and not (not ap and rnw and a == 0):
+                self.errors.append("not DPIDR after reset")
+                self.st = "lock"
+                return
+            self.ack = self.ackf(self.req)
+            self.st, self.k = "trn", 0
+            return
+        if st == "trn":                                   # turnaround edge: drive ACK bit 0 after it
+            if self.ack is None:
+                self.st = "idle"
+                return
+            self.bits = [(self.ack >> i) & 1 for i in range(3)]
+            ap, rnw, a = self.req
+            if self.ack == 1 and rnw:
+                v = self.ap.get(a, 0) if ap else self.dp.get(a, 0)
+                if not ap and a == 0:
+                    self.reset_state = False
+                self.bits += [(v >> i) & 1 for i in range(32)] + [parity32(v) ^ int(self.badp(self.req))]
+                self.log.append(("r", ap, a, v))
+            self.drive(t, self.bits[0])
+            self.st, self.k = "out", 1
+            return
+        if st == "out":
+            if self.k < len(self.bits):
+                self.drive(t, self.bits[self.k])
+                self.k += 1
+                return
+            self.drive(t, None)                           # release after the last bit
+            ap, rnw, a = self.req
+            if self.ack == 1 and not rnw:
+                self.st, self.k = "tsel", 4                 # one more edge: the turnaround cycle
+            else:
+                self.st = "idle"
+            return
+        if st == "tsel":                                  # TRN + 3 ACK slots + TRN, nobody drives
+            self.k += 1
+            if self.k == 5:
+                self.st, self.k, self.data = "win", 0, []
+            return
+        if st == "win":
+            self.data.append(b)
+            if len(self.data) < 33:
+                return
+            v = sum(x << i for i, x in enumerate(self.data[:32]))
+            ap, rnw, a = self.req
+            if parity32(v) != self.data[32]:
+                self.errors.append("write parity")
+            elif self.multidrop and self.reset_state and not ap and a == 0xC:
+                self.selected = v == self.tsel
+            elif ap:
+                self.ap[a] = v
+            else:
+                self.dp[a] = v
+            self.log.append(("w", ap, a, v))
+            self.st = "idle" if self.selected else "lock"

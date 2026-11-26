@@ -122,6 +122,13 @@ def swd_jtag_to_swd(idle=8):
     return swd_raw([1] * 56 + seq + [1] * 56) + swd_raw([0] * idle)
 
 
+def swd_targetsel(v):
+    # SWD v2 multidrop: TARGETSEL write (DP 0xC), no ACK from any target: request, 5 released cycles, data + parity
+    req = [(swd_req(0, 0, 0xC) >> i) & 1 for i in range(8)]
+    data = [(v >> i) & 1 for i in range(32)] + [parity(v)]
+    return swd_raw(req) + swd_raw([1] * 5, release=True) + swd_raw(data)
+
+
 def swd_read(ap, a):
     return bytes([swd_req(ap, 1, a)])
 
