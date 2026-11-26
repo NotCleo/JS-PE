@@ -11,14 +11,14 @@ Measured (D222): ±1 clk per phase and per sum of phases; high ≥ 1 / low ≥ 2
 Window = tock to tick of a one-shot `tset` (C = GATE: exact GATE·16^PRE clk; the `@tock` wait drops rises latched in the handler); watcher 0 aborts on tick. Count: 16-rise `shin` loop with `shin` input p1 = constant 1 (a late rise still shifts a 1), pass = `add S, #1` (clears S, CY) + `adc R0, R2`. Push S, R0 (+0); evt 2 = OVR (rises merged). Edges = popcount(S) + 16·R0, −1…+1 edge. Measured (D222): period ≥ 7 clk (7.1 MHz), high/low ≥ 1 clk; beyond, losses (evt 2 below 6 clk); pulses < 1 clk and > 25 MHz alias silently. 17 words.
 
 ## (c) nec.s: NEC IR receiver
-IR module (active low) on a Pmod pin, BIND-inverted; pre 2.
-- Leader: `@rise : tset`, mark ≥ 6.75 ms; space < 1.69 ms bad, < 3.375 ms repeat (`evt #1`), else frame.
-- Bits: `@fall : tset`, `@tock : shin` at 1.125 ms, `jw`; two 16-bit words: addr, ~addr, cmd, ~cmd.
+IR module (active low) on a Pmod pin, BIND-inverted; pre 2 (`CLK_HZ`, `PRE` scale the constants).
+- Leader: `@rise : tset`, mark ≥ 6.75 ms; space < 1.69 ms ignored, < 3.375 ms repeat (`evt #1`), else frame.
+- Bits: `@fall : tset`, `@tock : shin` at 0.84 ms (inside a 0's next mark, inside a 1's space; 1.125 ms would hit the end of a 0's next mark), `jw`; two 16-bit words: addr, ~addr, cmd, ~cmd.
 - Tick 3 ms after a mark end: abort, `evt #2`.
-Margins: bits ±50 %, leader −25 %; host checks complements. Est. 30 words.
+Measured (D223): ±10 % per-edge jitter and ×0.8 / ×1.2 timing decode, repeats, short leader / leader space ignored, cut frame → evt 2 and the next frame clean. Host checks complements. 29 words.
 
 ## (d) autobaud.s: UART RX locking on 0x55
-0x55 falls at bits 0, 2, 4, 6, 8: `@fall : tsync`, capture at fall 5: Δ = 8 bits, wraps counted below 6.1 kbaud. Self-configure: PRE by wraps (0, < 16, more), Δs = Δ >> 4·PRE, BIT = Δs >> 3, FRAC = (Δs & 7) << 5; write P, C, TCFG; bit 8 low and stop high, else `evt #3` and re-measure; push `evt #4`, BIT, FRAC|PRE; enter the uart_rx loop (host fallback: re-EXEC uart_rx). 300 baud–1 Mbaud, error ≤ 1 step/8. Est. 30 words.
+0x55 falls at bits 0, 2, 4, 6, 8. TCFG sedge = falls: each capture is one 2-bit interval, wraps counted by a tick call (`add R0, #1`; none can land between a capture and its sum). D = 8 bits (32 bit); PRE by D; BIT = Ds >> 3, FRAC = (Ds & 7) << 5; BIT < 15 → `evt #3`, re-measure; push `evt #4`, BIT, TCFG; uart_rx 8N1 loop. No stop/bit-8 check (no time left at 1 Mbaud): a wrong sync character shows as framing errors, the host re-RUNs. Next character ≥ 140 clk after the last sync fall (back to back from BIT 70). Measured (D223): 9.6 k–1 Mbaud at ±2 %, 1200 / 700 / 300 baud. 75 words.
 
 ## Host (step 4): method choice in host/measure.py
 Period capture (meter): ±1 clk per phase, and a sum of N periods is ±1 clk, so an average over time T has error 20 ns / T at any f. Gate counting (freq): ±1 edge per window, error 1 / (f·T). At equal T the meter always wins; its limit is the link (4 bytes/period: 78 k/s at B = 16, 312 k at B = 4) and low ≥ 22 clk. Rule: estimate f with a 10 ms freq window; f ≤ 50 kHz (B = 16) / 200 kHz (B = 4) → meter, PRE = smallest with period < 65 536 steps (EXT = 1 below 3 Hz), over-range readings step PRE up; else freq (window = requested T). OVR notice or evt 2 → retry / report.

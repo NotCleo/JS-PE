@@ -4,6 +4,7 @@ import math
 import random
 import pytest
 from harness import prog, boot, simulate
+from models import UartSender
 
 
 def wave(edges):
@@ -233,3 +234,164 @@ def test_freq_prescaled_window(pre, gate):
     for ph in (0, 3):
         for n, ev in run_freq(50, 25, ph, 0.3, gate, 2, pre):
             assert ev == 0 and in_bound(n, gate * 16 ** pre / 50)
+
+
+# ---- nec.s (fast tests at CLK_HZ 781.25 kHz, PRE 1: same code, constants scaled; one slow test at 50 MHz)
+
+NEC_LO = {"CLK_HZ": 781250, "PRE": 1}
+U = 562.5e-6
+
+
+def nec_edges(items, hz, t0, r, jit=0.0, scale=1.0):
+    # items: ("frame", addr, cmd[, nbits]) | ("repeat",) | ("lead", mark_s, space_s) | ("gap", s); line active low
+    edges, t = [], t0
+
+    def seg(lv, d):
+        nonlocal t
+        edges.append((t, lv))
+        t += d * scale * (1 + r.uniform(-jit, jit)) * hz
+    for it in items:
+        if it[0] == "frame":
+            bits = [(it[1] | (~it[1] & 0xFF) << 8 | it[2] << 16 | (~it[2] & 0xFF) << 24) >> k & 1 for k in range(32)]
+            seg(0, 16 * U)
+            seg(1, 8 * U)
+            for b in bits[:it[3] if len(it) > 3 else 32]:
+                seg(0, U)
+                seg(1, 3 * U if b else U)
+            if len(it) <= 3:
+                seg(0, U)
+            seg(1, 12e-3)
+        elif it[0] == "repeat":
+            seg(0, 16 * U)
+            seg(1, 4 * U)
+            seg(0, U)
+            seg(1, 12e-3)
+        elif it[0] == "lead":
+            seg(0, it[1] / scale)
+            seg(1, it[2] / scale)
+            seg(0, U)
+            seg(1, 12e-3)
+        else:
+            seg(1, it[1])
+    return edges, t
+
+
+def run_nec(items, ph=0, jit=0.0, scale=1.0, seed=0, defs=NEC_LO):
+    hz = defs.get("CLK_HZ", 50000000)
+    c = boot(prog("nec", **defs), ph, trace=False)
+    edges, end = nec_edges(items, hz, c.cycle + 20.3, random.Random(seed), jit, scale)
+    ts = [e[0] for e in edges]
+
+    def f(t, ch):
+        k = bisect.bisect_right(ts, t)
+        return (edges[k - 1][1] if k else 1), 0
+    simulate(c, int(end - c.cycle) + 10, f)
+    return [("evt", v & 0xFF) if v & 0x100 else v for _, v in c.host_out[0]]
+
+
+def nec_bytes(a, cmd):
+    return [a, ~a & 0xFF, cmd, ~cmd & 0xFF]
+
+
+def test_nec_size():
+    assert len(prog("nec").words) == 29
+
+
+@pytest.mark.parametrize("jit", [0.0, 0.1])
+def test_nec_frames_jitter(jit):
+    for ph in range(4):
+        r = random.Random(ph)
+        a, cm = r.randrange(256), r.randrange(256)
+        assert run_nec([("frame", a, cm)], ph, jit, seed=ph) == nec_bytes(a, cm)
+
+
+@pytest.mark.parametrize("scale", [0.8, 1.2])
+def test_nec_timing_scale(scale):
+    for ph in (0, 3):
+        assert run_nec([("frame", 0x5A, 0xC3)], ph, scale=scale) == nec_bytes(0x5A, 0xC3)
+
+
+def test_nec_repeat_codes():
+    got = run_nec([("frame", 0x10, 0x20), ("repeat",), ("repeat",)], 1, 0.1, seed=5)
+    assert got == nec_bytes(0x10, 0x20) + [("evt", 1), ("evt", 1)]
+
+
+def test_nec_bad_frames():
+    # short leader and short leader space: ignored; frame broken off after 10 bits: evt 2; the next frame is clean
+    items = [("lead", 4e-3, 4.5e-3), ("lead", 9e-3, 1.0e-3), ("frame", 0xAA, 0x55, 10), ("frame", 0x01, 0xFE)]
+    for ph in (0, 2):
+        assert run_nec(items, ph, 0.05, seed=ph) == [("evt", 2)] + nec_bytes(0x01, 0xFE)
+
+
+@pytest.mark.slow
+def test_nec_50mhz():
+    assert run_nec([("frame", 0x04, 0x08)], 2, 0.1, seed=9, defs={}) == nec_bytes(0x04, 0x08)
+
+
+# ---- autobaud.s
+
+def run_ab(bit, chars, ph=0, gap_after_sync=0.0, pre_chars=(), t0=40.3):
+    c = boot(prog("autobaud", ENG=0, RXPIN=0), ph, trace=False)
+    lead = UartSender(bit, list(pre_chars) + [0x55], t0=c.cycle + t0) if True else None
+    s = UartSender(bit, chars, t0=lead.end + gap_after_sync)
+    edges = lead.edges + s.edges
+    ts = [e[0] for e in edges]
+
+    def f(t, ch):
+        k = bisect.bisect_right(ts, t)
+        return (edges[k - 1][1] if k else 1), 0
+    simulate(c, int(s.end - c.cycle) + int(2 * bit) + 20, f)
+    out = [("evt", v & 0xFF) if v & 0x100 else v for _, v in c.host_out[0]]
+    return out
+
+
+def ab_check(out, bit, chars):
+    k = out.index(("evt", 4))
+    b = out[k + 1:k + 5]
+    tc = b[2] | b[3] << 8
+    mean = ((b[0] | b[1] << 8) + (tc & 0xFF) / 256) * 16 ** (tc >> 8)
+    return out[:k] == [] and out[k + 5:] == chars and abs(mean - bit) <= 1 / 8 * 16 ** (tc >> 8) + 0.13, mean
+
+
+@pytest.mark.parametrize("baud", [1000000, 921600, 460800, 115200, 57600, 9600])
+def test_autobaud_rates(baud):
+    data = [0x00, 0xFF, 0xA3, 0x3C] if baud > 100000 else [0xA3]
+    for ph in (range(4) if baud > 100000 else (1,)):
+        for dev in (-0.02, 0.0, 0.02) if baud > 100000 else (-0.02, 0.02):
+            bit = 50e6 / baud * (1 + dev)
+            ok, mean = ab_check(run_ab(bit, data, ph, gap_after_sync=400), bit, data)
+            assert ok, (baud, dev, ph, mean)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("baud,dev", [(1200, 0.02), (700, -0.02), (300, 0.02)])
+def test_autobaud_low_rates(baud, dev):
+    # 1200: wraps inside each interval; 700, 300: PRE 1
+    bit = 50e6 / baud * (1 + dev)
+    ok, mean = ab_check(run_ab(bit, [0xA5], 1, gap_after_sync=0), bit, [0xA5])
+    assert ok, mean
+
+
+def test_autobaud_too_fast_remeasures():
+    # a 0x55 at BIT 10 (5 Mbaud) is refused (evt 3); the next 0x55 at 1 Mbaud locks
+    c = boot(prog("autobaud", ENG=0, RXPIN=0), 0, trace=False)
+    a = UartSender(10, [0x55], t0=c.cycle + 40.3)
+    b = UartSender(50, [0x55], t0=a.end + 500)
+    d = UartSender(50, [0x3C], t0=b.end + 400)
+    edges = a.edges + b.edges + d.edges
+    ts = [e[0] for e in edges]
+    simulate(c, int(d.end - c.cycle) + 120, lambda t, ch: (edges[bisect.bisect_right(ts, t) - 1][1] if t >= ts[0] else 1, 0))
+    out = [("evt", v & 0xFF) if v & 0x100 else v for _, v in c.host_out[0]]
+    assert out[0] == ("evt", 3) and out[1] == ("evt", 4) and out[-1] == 0x3C
+
+
+def ab_gap_ok(bit, g):
+    return all(ab_check(run_ab(bit, [0x00, 0xFF], ph, gap_after_sync=g, t0=40.3 + 0.27 * ph), bit, [0x00, 0xFF])[0]
+               for ph in range(4))
+
+
+def test_autobaud_gap_after_sync():
+    # the rate is computed after the 5th fall: the next start must come >= 140 clk after it,
+    # i.e. idle >= 140 - 2 BIT after the 0x55 stop bit (back to back from BIT 70; 40 clk at 1 Mbaud)
+    assert ab_gap_ok(50, 40) and not ab_gap_ok(50, 20)
+    assert ab_gap_ok(70, 0)
