@@ -73,7 +73,7 @@ Needs Python 3.12, Icarus Verilog, Verilator and Yosys; formal also needs the OS
 ```sh
 git clone https://github.com/NotCleo/JS-PE && cd JS-PE
 python3 -m venv .venv && . .venv/bin/activate
-pip install -r test/requirements.txt pyyaml
+pip install -r test/requirements.txt
 make lint        # Verilator lint
 make swtest      # assembler and simulator tests
 make test        # system tests, RTL against the simulator
