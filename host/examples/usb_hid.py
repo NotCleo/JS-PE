@@ -121,7 +121,7 @@ class Device:
         # until it has landed; INACK events that arrive before that belong to the stale arm (rule b)
         self.stale, self.armed = self.armed, None
         self.link.wrmem(KEYS + 1, [0])
-        while not self.link.u.txdone():
+        while not self.link.port.txdone():
             pass
         time.sleep_us(50)
         self.link.poll()
