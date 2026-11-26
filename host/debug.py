@@ -170,3 +170,80 @@ def swd_xfer(port, op, ap, a, v=0, retries=100):
         if ack != ACK_WAIT:
             return ack, None
     return ACK_WAIT, None
+
+
+# ---------------- SWD DP emulator (swd_dp.s): the box service ----------------
+class DpBox:
+    # Serves the chip's AP accesses and SELECT writes (request bytes 0x10 | A3 A2 RnW APnDP from the stream) as an
+    # AP register file keyed by (APSEL, address). rd(addr, n) -> words, wr(addr, words): RDMEM / WRMEM (ST last).
+    # fail: set of (apsel, addr) whose accesses report an AP error (STICKYERR).
+    def __init__(self, base, ap=None, fail=()):
+        self.base, self.ap, self.fail, self.select, self.log = base, dict(ap or {}), set(fail), 0, []
+
+    def serve(self, req, rd, wr):
+        k = req & 15
+        isap, rnw, a = k & 1, k >> 1 & 1, (k >> 2 & 3) << 2
+        b = self.base
+        if not rnw:
+            dl, dh = rd(b + 3, 2)
+            v = dl | dh << 16
+        key = (self.select >> 24, (self.select & 0xF0) | a)
+        err = isap and key in self.fail
+        if not isap:
+            self.select = v
+            self.log.append(("select", v))
+            wr(b + 2, [0])
+        elif rnw:
+            v = self.ap.get(key, 0)
+            self.log.append(("r", key, v))
+            wr(b, [v & 0xFFFF, v >> 16, 0x20 if err else 0])
+        else:
+            if not err:
+                self.ap[key] = v
+            self.log.append(("w", key, v))
+            wr(b + 2, [0x20 if err else 0])
+
+
+# ---------------- SWO (uart_rx.s receives the NRZ bytes unchanged) ----------------
+def itm_decode(data):
+    # ITM/DWT packet stream -> [("sync",), ("overflow",), ("sw"|"hw", port, value), ("ts", value)]
+    out, i, n = [], 0, len(data)
+    while i < n:
+        h = data[i]
+        if h == 0:
+            j = i
+            while j < n and data[j] == 0:
+                j += 1
+            if j < n and data[j] == 0x80 and j - i >= 5:
+                out.append(("sync",))
+                i = j + 1
+                continue
+            i += 1
+            continue
+        if h == 0x70:
+            out.append(("overflow",))
+            i += 1
+        elif h & 3:
+            size = {1: 1, 2: 2, 3: 4}[h & 3]
+            if i + size >= n:
+                break
+            v = 0
+            for k in range(size):
+                v |= data[i + 1 + k] << (8 * k)
+            out.append(("hw" if h & 4 else "sw", h >> 3, v))
+            i += 1 + size
+        elif h & 0x0F == 0 and not h & 0x80:
+            out.append(("ts", h >> 4))                     # short local timestamp
+            i += 1
+        elif h & 0xCF == 0xC0:
+            v, k, i = 0, 0, i + 1
+            while i < n:
+                v |= (data[i] & 0x7F) << (7 * k)
+                k += 1
+                i += 1
+                if not data[i - 1] & 0x80:
+                    break
+            out.append(("ts", v))
+        else:
+            i += 1                                         # reserved or extension: skipped
+    return out
