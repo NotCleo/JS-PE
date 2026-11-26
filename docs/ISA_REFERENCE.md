@@ -109,7 +109,7 @@ Removed in the trim of D048 (now trap): `stgl`, `sbc`, `swap`, `not`, `wcfg SIG`
 | `.deadline n [, label]` | after a guarded instruction G: the next guard on that path must be armed ≤ n clk after G fires, else assembly fails |
 | `.assume armed m` | after G: G fires ≥ m clk after it is armed — a stated environment precondition that credits the prefetch; checked by ISS test T6 |
 
-Command line: `jspe_asm.py [-D NAME=expr] [--mem n] file.s {file.s}` (`--mem` default 512; 128 for the flop fallback) assembles several files into one image (per-file labels; `-D` selects variants, engines, load addresses). Outputs: `.hex`, `.bin` (load image for the host, [HOST_INTERFACE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md)), `.lst` (address, word, source, arming bound). `--mem 128` is the shipped build.
+Command line: `jspe_asm.py [-D NAME=expr] [--mem n] file.s {file.s}` (`--mem` default 512; 128 for the flop fallback) assembles several files into one image (per-file labels; `-D` selects variants, engines, load addresses). Outputs: `.hex`, `.bin` (load image for the host, [HOST_INTERFACE.md](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md)), `.lst` (address, word, source, arming bound). The shipped build is the 512-word SRAM build (default `--mem 512`, D131); `--mem 128` targets the flop fallback.
 
 ## 8. Static arming bound
 

@@ -5,7 +5,7 @@
 Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/): a Tiny Tapeout chip on IHP 130 nm that runs serial protocols as small programs instead of fixed hardware.
 
 - Four small engines each hold one instruction, `guard : operation`, and fire it in the clock its event arrives, so a pin edge becomes a pin change in 3–4 clocks.
-- Nothing protocol-specific is built in. UART, SPI and I2C were the brief; WS2812, Manchester and CAN 2.0A were added later with no RTL change.
+- Nothing protocol-specific is built in. UART, SPI and I2C were the brief; WS2812, Manchester, CAN 2.0A, USB low speed, on-chip bridges, bus monitors, measurement programs and fault injection were added later as programs, with no RTL change.
 - Everything is verified in simulation, at RTL and at gate level. Nothing has run on silicon or a board yet.
 
 **Contents:** [At a glance](#1-at-a-glance) · [The challenge](#2-the-challenge) · [How it works](#3-how-it-works) · [Quick start](#4-quick-start) · [Protocols](#5-protocols) · [On the demo board](#6-on-the-demo-board) · [Pins and wiring](#7-pins-and-wiring) · [Verification and sign-off](#8-verification-and-sign-off) · [Limits](#9-limits) · [How it was built](#10-how-it-was-built) · [Repository map](#11-repository-map) · [Future work](#12-future-work) · [Acknowledgements and licence](#13-acknowledgements-and-licence)
@@ -18,11 +18,11 @@ Cleo is my entry to the [Jane Street protocol emulator ASIC competition](https:/
 |---|---|
 | Process | IHP SG13 130 nm through the Tiny Tapeout IHP template, 8x4 tiles |
 | Architecture | 4 engines, 512 x 16 shared program memory (SRAM macro), 67 instructions, 3-pin host link |
-| Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A, USB low speed (simulation) |
+| Protocols | UART, SPI controller and target, I2C controller and target; not designed in: WS2812, Manchester, CAN 2.0A, USB low speed, UART→SPI and I2C→UART bridges, SPI/I2C/UART monitors, pulse meter, frequency counter, NEC IR, autobaud UART, fault-injection builds (all simulation) |
 | Clock | 50 MHz (about 57 MHz possible, estimate) |
 | Area | 37.9 % of the core including the SRAM macro (my limit: 60 %) |
 | Sign-off | Tiny Tapeout precheck, DRC, LVS and antenna pass; setup and hold met in all corners |
-| Tests | 45/45 system tests at RTL and at gate level; 149 formal properties proven |
+| Tests | 55/55 system tests at RTL (lockstep with the simulator), 45/45 at gate level on the sign-off netlist; 1 153 assembler/simulator tests; 149 formal properties proven |
 | Hardware | not tested on a board or silicon yet |
 
 ----
@@ -115,10 +115,18 @@ All rates are from simulation.
 | WS2812 \* | LED strip driver | the LED's own rate (794 kbit/s) |
 | Manchester \* | TX, and RX with clock recovery | 2.27 Mbit/s TX, 2.78 Mbit/s RX |
 | CAN 2.0A \* | 11-bit IDs, arbitration, bit stuffing, CRC-15, ACK, error flags | 500 kbit/s |
+| [USB 2.0 low speed](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/usb_ls.s) \*\* | HID keyboard device: NRZI, stuffing, CRC5/16, ACK/NAK/STALL; RP2350 answers SETUPs | 1.5 Mbit/s (fixed by USB LS), 48 MHz clock |
+| [Bridge UART → SPI](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/bridge_uart_spi.s) \*\* | UART RX to SPI controller TX through a ring in memory, no host in the data path | 3.57 Mbaud in |
+| [Bridge I2C → UART](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/bridge_i2c_uart.s) \*\* | I2C target writes forwarded to UART TX, SCL stretched while the UART is busy | 400 kHz I2C |
+| Monitors \*\* ([SPI](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/spi_mon.s), [I2C](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/i2c_mon.s), [UART](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/uart_mon.s)) | passive: every pad stays released; optional timestamps; decoders in [host/monitor.py](https://github.com/NotCleo/JS-PE/blob/main/host/monitor.py) | SPI 12.5 MHz SCK, I2C 1 MHz, UART 2.63 Mbaud both lines |
+| Measurement \*\* ([meter](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/meter.s), [freq](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/freq.s), [NEC](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/nec.s), [autobaud](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/programs/autobaud.s)) | pulse widths ±1 clk, frequency per gate window, NEC IR frames, UART rate lock on 0x55; decoders in [host/measure.py](https://github.com/NotCleo/JS-PE/blob/main/host/measure.py) | input ≤ 7.1 MHz; autobaud 300 baud–1 Mbaud |
 
-\* Not designed in: run on the frozen RTL with no RTL change. WS2812 and Manchester were sketched while the ISA was being written, so they may have shaped it; CAN was written entirely afterwards. The one RTL change since the freeze is a reset bug fix found by formal verification.
+\* Not designed in: run on the frozen RTL with no RTL change. \*\* Added after rtl-freeze-v1, also programs only (simulation: ISS, most also in RTL lockstep). WS2812 and Manchester were sketched while the ISA was being written, so they may have shaped it; CAN was written entirely afterwards. The one RTL change since the freeze is a reset bug fix found by formal verification.
 
 Unique capabilities:
+
+- Scenario runner: one YAML file (programs, pins, stimulus, expected traffic) runs on the simulator, the RTL and the board, after a conflict check of engines, pads, memory, slot map and LFSR ([host/scenario.py](https://github.com/NotCleo/JS-PE/blob/main/host/scenario.py), [scenarios/](https://github.com/NotCleo/JS-PE/tree/main/scenarios), [HOST_INTERFACE 10](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md)); the board backend is not run on hardware yet.
+- PIO host link: the RP2350's PIO runs the host link at 4 clk per bit, 4x the hardware UART ([design](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/pio_link_design.md), [host/jspe.py](https://github.com/NotCleo/JS-PE/blob/main/host/jspe.py)); validated against a PIO model and two independent references, not on hardware.
 
 - Fault injection: `-D FAULTS=1` builds of the UART TX, I2C target, SPI target and CAN programs inject one armed fault each (wrong parity, low stop bit, break; NACK, extra stretch, ignored address, stuck SDA; flipped bits, short/long SPI words; a bad CAN CRC) at a chosen position, armed by one memory write from the host; seeded random campaigns are reproducible, and every fault is shown to reach the partner's receiver (test EI1). The fault builds trade speed: UART TX ≤ 1.08 Mbaud, SPI target ≤ 1 MHz.
 
@@ -181,11 +189,11 @@ The simulator was written from the spec before the RTL. Every program was proven
 
 | Method | Result |
 |---|---|
-| Assembler and simulator tests | 350 pass |
+| Assembler and simulator tests | 1 153 pass (1 085 without the slow ones in `make swtest`) |
 | RTL block tests | 56 pass |
-| System tests, RTL and simulator in lockstep | 45/45 |
+| System tests, RTL and simulator in lockstep | 55/55 (CI run 45825392149) |
 | Random programs on the full chip against the simulator | 3 M clocks clean |
-| The same 45 tests on the post-layout netlist | 45/45 |
+| The 45 system tests of the sign-off run on its post-layout netlist | 45/45 |
 | Formal proofs (SymbiYosys, 11 blocks) | 149 properties proven |
 | Mutation testing of the proofs | 211 of 213 mutants caught, 2 equivalent |
 

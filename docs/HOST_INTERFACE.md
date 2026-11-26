@@ -75,7 +75,7 @@ The assembler writes a `.bin` image: header `"JSPE"`, version 1, record count, t
 | 0x03 EXEC | `EXEC` initialisation instructions, then `jmp entry` |
 | 0x04 RUN | `RUN` mask |
 
-Pads are enabled only after initialisation, so no pad drives a wrong level while the program is being set up. While other engines keep running, the read-back uses short `RDMEM`s (4 / 11 / 23 words at 16 / 8 / 4 clk per bit) so that their streams never wait more than 2 000 clk behind a reply (D088). Program load: 1 KB in ≈ 3.3 ms at 16 clk per bit (HOSTIF 8; the 128-word memory is 256 bytes).
+Pads are enabled only after initialisation, so no pad drives a wrong level while the program is being set up. While other engines keep running, the read-back uses short `RDMEM`s (4 / 11 / 23 words at 16 / 8 / 4 clk per bit) so that their streams never wait more than 2 000 clk behind a reply (D088). Program load: 1 KB in ≈ 3.3 ms at 16 clk per bit (HOSTIF 8; a full 512-word image is 1 KB; the 128-word flop fallback is 256 bytes).
 
 ## 7. Bandwidth
 

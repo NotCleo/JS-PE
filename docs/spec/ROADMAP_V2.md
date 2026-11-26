@@ -14,14 +14,14 @@ Handoff from a separate analysis chat (2026-11-24). Every number below was check
 
 **USB LS Pmod (uio[4] D+, uio[5] D−, uio[6] pull-up enable):** 7SEMI micro-USB breakout (DP, DN, GND; VBUS and ID unconnected), 27 Ω in series on each data line, 1.5 kΩ from D− to uio[6] (soft connect). No active parts.
 
-## 2. Feasibility on the current chip (rtl-freeze-v1, 128×16 flop memory, 50 MHz)
+## 2. Feasibility on the chip (written at rtl-freeze-v1 with the 128×16 flop memory; shipped since D131: 512×16 SRAM; 50 MHz)
 
 | Item | Verdict | Evidence |
 |---|---|---|
 | 10BASE-T frames | **Not possible** | Measured Manchester max: TX 2.27 Mbit/s (BIT ≥ 22 clk), RX 2.78 Mbit/s (BIT ≥ 18). 10BASE-T needs BIT = 4–6 clk: 3–5× short at any closable clock. Frames also need gap-free shifter↔memory movement; auto-transfer only reaches the FIFOs, and `ld`/`st` (2–5 clk) is longer than a half-bit |
 | 10BASE-T link pulses | **Possible, no RTL** | 100 ns pulse every 16 ms from tick/tock; PC shows link up |
 | USB LS | **Possible, no RTL** | 48 MHz = 32 clk/bit (1.8× above the RX limit). NRZI decode = SHCFG `diff`; stuffing = TAPCFG `rl`=6, `r1`=1 + `jrun`/`smp`/`q`(ALT stuff) on padless p3 (as in can.s); CRC5/16 = right-form LFSR (POLY 0x14 / 0xA001); SE0 = condition cell LUT 0x1 as a watcher; J/K/SE0 = D+ pad on E0.p0, D− pad on E0.p1 with `inv`, both set in one E instruction. TX NRZI needs a per-bit branch (`diff` acts on one pin only; SE0 needs separate pins): ~4 instructions per bit, within 32 clk. ACK/NAK deadline 7.5 bits = 240 clk: E1 sets a signal flag, E0 answers; slow work (descriptors) is NAK-until-ready on the RP2350 |
-| USB LS risk | **128 words** | can.s uses 128/128. Estimate: E1 ~40 + E0 ~35–40 + IN buffer ~5 ≈ 80–85. Assemble early |
+| USB LS risk | **resolved** | Done (D200–D204, D228): usb_ls.s = 147 words in the shipped 512-word build, 128/128 in the flop fallback (2026-11-24 estimate was 80–85; can.s 128 words) |
 | USB full speed, 100BASE-TX, HDMI, USB HS | Impossible | Pads (~66 MHz out, no analog, no differential) |
 
 ## 3. Improvement options (need decisions, ranked by value)
@@ -29,7 +29,7 @@ Handoff from a separate analysis chat (2026-11-24). Every number below was check
 | # | Change | Gain | Cost (estimate) | Lifts freeze? |
 |---|---|---|---|---|
 | 0 | PIO UART host link at LINK = 4 clk/bit | Host bandwidth ×4 (~1.2 MB/s); the hardware UART is stuck at 3 Mbaud (D090) | Host software only | No |
-| 1 | **SRAM macro retry**: fix the LVS supply-name mismatch (VDD!/VSS!/VDDARRAY! vs VDD/VSS/VDDARRAY) with a netgen equate or a renamed CDL/LEF, starting from commit 6896dd8 | −133k µm² placed (D062), 512 words | Flow work; flop build stays as fallback | No (already a deferred PROGRESS task) |
+| 1 | **SRAM macro retry** — **done** (D129–D131, shipped): run 45553919240 (confirmed on main by 45591139824), 457.9k µm² placed incl. macro = 37.9 %, setup 2.68 / 9.08 / 12.66 ns, hold 0.602 / 0.284 / 0.105 ns (slow / typ / fast) | −234k µm² placed vs the flop build (692k), 512 words | Flow work; flop build stays as fallback (`-DJSPE_MEM_FLOP`) | No |
 | A | **Timer-clocked shifting**: shin on tock / out on tick in hardware, no instruction per bit | Bit rate limited by the timer (≥2 clk/bit), not fire/re-arm (~18–22): 5–10× faster bit layer for every protocol | ~27k µm² | Yes |
 | B | **Line-code modes**: Manchester (D XOR half-bit phase), biphase-mark, pin-pair output with SE0 override | 10BASE-T TX, hardware USB NRZI on two pins, RC5, DALI | ~11k µm² | Yes |
 | C | **Memory auto-transfer (DMA)**: per-engine pointer + count, push/pull to jspe_mem at word end | Whole frames (Ethernet, USB buffers, CAN bursts), logic-analyzer capture, pattern replay | ~22k µm² | Yes |
@@ -37,7 +37,7 @@ Handoff from a separate analysis chat (2026-11-24). Every number below was check
 | E | Timer capture on edge | IR NEC, PWM in, DShot, SENT, 1-Wire | ~6.5k µm² | Yes |
 | F | ×2 / ×4 multi-lane shift | QSPI, SD 4-bit, HUB75 | ~32k µm² | Yes |
 
-Area today: 692k placed = 57.3 % of core, limit 60 % → ~32k µm² headroom. A–E (~77k) fits only after item 1. Area estimates assume ~27 µm² per placed cell (445k/23.7k synthesized × 1.42); they are not measured.
+Area today (shipped SRAM build, D131): 457.9k µm² placed including the macro = 37.9 % of the 1 208 173 µm² core; limit 60 % = 724.9k → ~267k µm² headroom, so A–E (~77k, estimated) would fit. Before D131 the flop build was 692k = 57.3 % (~32k headroom, now the fallback only). Area estimates assume ~27 µm² per placed cell (445k/23.7k synthesized × 1.42, flop-build ratio); they are not measured.
 
 Timing rule for A–F: keep each local and registered (timer events → S → pin state register). Nothing may lengthen the guard → fire → pad path that D081 cut.
 
@@ -56,8 +56,8 @@ Original questions:
 
 ## 5. Suggested order
 
-1. No RTL: usb_ls.s (design note first, per CLAUDE.md small steps), PIO host link, 10BASE-T link-pulse program, write-up section stating the measured 10BASE-T gap.
-2. SRAM macro retry (time-boxed, fallback to flops).
+1. No RTL: usb_ls.s (done, D200–D204), PIO host link (done host-side, D219/D220, not on hardware), 10BASE-T link-pulse program, write-up section stating the measured 10BASE-T gap.
+2. SRAM macro retry (time-boxed, fallback to flops) — done, shipped (D131).
 3. If approved: A + B → C → rerun Manchester at 10 Mbit/s and 10BASE-T end to end → D/E if area allows. F is future work.
 
 ## 6. Schedule
