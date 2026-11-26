@@ -9,7 +9,10 @@
 ; accuracy (ISS, 4 slot phases): +-1 clk per phase (input sampling); consecutive phases share their edge sample, so
 ;       a sum of phases is +-1 clk too (period, or a host average over any time). PRE > 0: host takes the step centre,
 ;       (steps - 0.5) * 16^PRE, +-(step / 2 + 1 clk). Range per phase 65 535 steps: 1.31 ms / 21 ms / 335 ms.
-; min phases: EXT = 0: high >= 1 clk, low >= 22 clk; EXT = 1: high >= 10 clk, low >= 14 clk. A shorter phase is
+; min phases: EXT = 0: high >= 1 clk, low >= 22 clk; EXT = 1: high >= 10 clk, low >= 14 clk. Why: the fall guard is
+;       prefetched and armed 1 clk after the rise capture, but after the fall capture the 4 pushes + jmp (~4 clk each)
+;       run before the rise guard is armed again (EXT splits them: 2 pushes after each capture). Short low pulses:
+;       INV = 1 (BIND invert) swaps the roles: low >= 1 clk, high >= 22 clk; records are then high, low. A shorter phase is
 ;       captured late and reads the time since its edge: a reading below the minimum means "shorter, length unknown"
 ;       (the next phase stays exact: the timer restarted at the true edge). Pulses < 1 clk may vanish (synchronizer).
 ; EXT = 1: an edge 0-13 clk after a wrap is captured after the wrap call: -12 .. +13.5 clk; host flags readings with
@@ -20,6 +23,7 @@
 .equ PRE,    0                  ; timer prescale 0, 1, 2 = /1, /16, /256 (EXT = 0 only)
 .equ EXT,    0                  ; 1 = count wraps: phases of any length at 1 clk
 .equ MPIN,   0                  ; pad of the measured signal
+.equ INV,    0                  ; 1 = measure the inverted pin (short low pulses)
 .equ ENG,    0                  ; engine and load address: override with -D
 .equ ORG,    16
 .engine ENG
@@ -27,7 +31,7 @@
         li    R0, #0xFFFF
         mov   P, R0
         mov   C, R0                     ; swin: restart only while T < C, i.e. after the first step
-        li    R0, #MPIN
+        li    R0, #MPIN | (INV << 5)
         wcfg  BIND01, R0
 .if EXT
         li    R0, #0x0C00               ; TCFG: sync on both edges, periodic, /1

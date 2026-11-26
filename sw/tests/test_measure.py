@@ -15,7 +15,7 @@ def wave(edges):
     return f
 
 
-def run_meter(phases, ph=0, frac=0.3, tail=100, **defs):
+def run_meter(phases, ph=0, frac=0.3, tail=100, skip=1, **defs):
     # phases: alternating high, low (clk) from a rise at 50 + frac; returns (phase readings, wraps per reading, chip)
     edges, t, lv = [], 50.0 + frac, 1
     for d in list(phases) + [300, 300]:          # two more edges: the last reading is pushed at the next fall
@@ -39,7 +39,7 @@ def run_meter(phases, ph=0, frac=0.3, tail=100, **defs):
             ws.append(w)
             w, b = 0, []
     n = len(phases)
-    return caps[1:n + 1], ws[1:n + 1], c          # the first reading is the phase before the first rise
+    return caps[skip:n + skip], ws[skip:n + skip], c   # skip: the phase before the first logical rise
 
 
 def clk(v, w=0, pre=0):
@@ -53,7 +53,7 @@ def clk(v, w=0, pre=0):
 
 
 def meter_errs(phases, ph=0, frac=0.3, pre=0, **defs):
-    caps, ws, c = run_meter(phases, ph, frac, PRE=pre, **defs)
+    caps, ws, c = run_meter(phases, ph, frac, skip=1 - defs.get("INV", 0), PRE=pre, **defs)
     got = [clk(v, w, pre) for v, w in zip(caps, ws)]
     return [None if g is None else g - d for g, d in zip(got, phases)], len(got), c
 
@@ -84,10 +84,10 @@ def test_meter_duty_1_to_99():
         assert n == len(phases) and max(map(abs, e)) <= 1
 
 
-def ok_phases(phases, ext, rel):
+def ok_phases(phases, ext, rel, inv=0):
     for ph in range(4):
         for fr in (0.1, 0.5, 0.9):
-            e, n, c = meter_errs(phases, ph, fr, EXT=ext)
+            e, n, c = meter_errs(phases, ph, fr, EXT=ext, INV=inv)
             if n < len(phases) or any(abs(x) > 1 for x in e if x is not None) or None in e:
                 return False
     return True
@@ -99,6 +99,13 @@ def test_meter_shortest_phases(ext, hmin, lmin):
     assert not ok_phases([300, lmin - 1] * 6, ext, 1)
     if ext:
         assert not ok_phases([hmin - 1, 300] * 6, ext, 1)
+
+
+def test_meter_inverted_short_lows():
+    # INV = 1: the pin's high is the logical low; physical low >= 1 clk, physical high >= 22 clk
+    assert ok_phases([300, 1] * 6, 0, 1, inv=1) and ok_phases([22, 300] * 6, 0, 1, inv=1)
+    assert not ok_phases([21, 300] * 6, 0, 1, inv=1)
+    assert not ok_phases([300, 1] * 6, 0, 1)
 
 
 def test_meter_glitches():
