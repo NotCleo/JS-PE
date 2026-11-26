@@ -156,7 +156,7 @@ def test_host_targetsel_multidrop():
 
 @pytest.mark.parametrize("bit", [6, 10, 20])
 def test_host_target_answer_window(bit):
-    # header: the target may drive BIT - 4 clk after the rising edge at its pin; 1 clk more is too late
+    # header: a target driving BIT - 4.5 clk after the rising edge at its pin is read; BIT - 1.8 clk is too late
     for d, good in ((bit - 4 - 0.5, True), (bit - 2 + 0.2, False)):
         t = SwdTarget(DPIDR, delay=d)
         p = Port(t, bit, bit // 2)
@@ -216,7 +216,7 @@ from models import SwdHost                                            # noqa: E4
 from harness import PROG                                              # noqa: E402
 from jspe_asm import Assembler                                        # noqa: E402
 
-DP_ID = 0x0C1E1001
+DP_ID = 0x0C001001
 BOX0 = 455
 
 
@@ -232,6 +232,8 @@ class DpBench:
         self.lat = lat
 
     def chip_drive(self, c):
+        if sum(c.uio_oe >> p & 1 for p in self.pads.values()) > 1:
+            self.clash += 1                            # two DPs driving at once
         for p in self.pads.values():
             if c.uio_oe >> p & 1:
                 return c.uio_out >> p & 1
@@ -290,7 +292,7 @@ def test_dp_session(T, slot, sample):
     r = b.run()
     assert r[0] == (1, DP_ID, True)
     assert r[2] == (1, 0xF0000000, True)               # power-up ACKs mirror the requests
-    assert r[5][0] == 1                                # first AP read: posted (previous value, 0)
+    assert r[5] == (1, 0, True)                        # first AP read: posted (previous value, 0)
     assert r[6] == (1, 0xCAFEF00D, True)               # AP read of 0x1C returns the 0x14 read
     assert r[7] == (1, 0x12345678, True)               # RDBUFF: the 0x1C read
     assert all(x[0] == 1 for x in r) and b.clash == 0 and b.c.eng[0].ovr == 0
@@ -348,7 +350,7 @@ def mdrop_img():
     return Assembler([("swd_dp.s", src), ("swd_dp1.s", src)],
                      {"swd_dp.s:MDROP": "1", "swd_dp.s:ORG": "0", "swd_dp1.s:MDROP": "1", "swd_dp1.s:ENG": "1",
                       "swd_dp1.s:ORG": "212",
-                      "swd_dp1.s:DIO": "4", "swd_dp1.s:TSEL": "0x1C1E0001", "swd_dp1.s:DPIDR": "0x2C1E2001"}).run()
+                      "swd_dp1.s:DIO": "4", "swd_dp1.s:TSEL": "0x1C1E0001", "swd_dp1.s:DPIDR": "0x2C002001"}).run()
 
 
 def test_dp_multidrop_two_targets():
@@ -359,15 +361,15 @@ def test_dp_multidrop_two_targets():
            ("reset",), ("idle", 2), ("tsel", 0x5C1E0001), ("r", 0, 0)]
     b = DpBench(mdrop_img(), ops, 120, 0, engines=((0, 1), (1, 4)))
     r = b.run()
-    assert r[0] == (1, 0x0C1E2001, True) and r[2] == (1, 0x2C1E2001, True) and r[4][0] == 7, r
+    assert r[0] == (1, 0x0C002001, True) and r[2] == (1, 0x2C002001, True) and r[4][0] == 7, r
     assert b.boxes[0].ap == {(0, 0): 0xA} and b.boxes[1].ap == {(0, 0): 0xB} and b.clash == 0
 
 
 MIX = CONNECT + [("w", 0, 4, 0x50000000), ("r", 0, 4), ("w", 0, 8, 0x0F000000), ("w", 1, 4, 1), ("r", 1, 4),
                  ("r", 0, 0xC), ("w", 1, 0, 0xFFFFFFFF, 1), ("r", 1, 0), ("w", 0, 0, 0x1E), ("r", 1, 0), ("r", 0, 0xC),
-                 ("w", 1, 8, 0), ("r", 0, 0xC), ("w", 0, 4, 0x50000000), ("r", 0, 0), ("w", 0, 0, 4), ("r", 0, 4),
+                 ("w", 1, 8, 0), ("r", 0, 0xC), ("w", 0, 4, 0x50000000), ("w", 0, 0xC, 1), ("r", 0, 0), ("w", 0, 0, 4), ("r", 0, 4),
                  ("w", 0, 0xC, 1)]
-MIX_ACKS = [1, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1, 4, 4, 1, 1, 1, 1]  # CTRL/STAT write while sticky: FAULT     # TARGETSEL outside a line reset: ignored, OK
+MIX_ACKS = [1, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1, 4, 4, 4, 1, 1, 1, 1]  # CTRL/STAT, TARGETSEL write while sticky: FAULT     # TARGETSEL outside a line reset: ignored, OK
 
 
 def dp_scenario(img, slot, T=100, gap=0, sample="fall", lat=150):
@@ -394,3 +396,19 @@ def test_dp_rate_too_fast_fails():
     # negative: 60 clk back to back breaks the ABORT-after-AP-error path (no reply)
     with pytest.raises(AssertionError):
         dp_scenario(dp_img(), 0, 60, 0)
+
+
+def test_dp_csw_waits_while_busy_and_tsel_parity():
+    # CTRL/STAT write while the box is busy: WAIT (only DPIDR / CTRL-STAT reads and ABORT skip it); MDROP: a TARGETSEL
+    # with a data parity error deselects (both DPs silent), no WDATAERR
+    ops = CONNECT + [("w", 1, 0, 1), ("w", 0, 4, 0x50000000), ("r", 0, 4)]
+    b = DpBench(dp_img(), ops, 80, 1, lat=4000)
+    r = b.run()
+    assert [x[0] for x in r] == [1, 1, 1, 1] and r[3][1] == 0xF0000000 and b.host.waits >= 1
+    bad = [1, 0, 0, 1, 1, 0, 0, 1] + [None] * 5 + [(0x0C1E0001 >> i) & 1 for i in range(32)] + [0]   # parity wrong (7 ones)
+    ops = [("reset",), ("idle", 2), ("bits", bad), ("r", 0, 0), ("reset",), ("idle", 2), ("tsel", 0x0C1E0001),
+           ("r", 0, 0), ("r", 0, 4)]
+    b = DpBench(mdrop_img(), ops, 120, 0, engines=((0, 1), (1, 4)))
+    r = b.run()
+    assert r[0][0] == 7 and r[1] == (1, 0x0C002001, True) and r[2] == (1, 0, True), r   # no WDATAERR
+    assert b.clash == 0

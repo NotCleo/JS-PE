@@ -148,7 +148,7 @@ def tap_img(n=1, **d):
     files = [("jtag_tap.s", src)] + ([("jtag_tap1.s", src)] if n > 1 else [])
     defs = {"jtag_tap.s:%s" % k: str(v) for k, v in d.items()}
     if n > 1:
-        defs.update({"jtag_tap1.s:ENG": "1", "jtag_tap1.s:ORG": "184", "jtag_tap1.s:TDIPIN": "10",
+        defs.update({"jtag_tap1.s:ENG": "1", "jtag_tap1.s:ORG": "192", "jtag_tap1.s:TDIPIN": "10",
                      "jtag_tap1.s:TDOPAD": "7", "jtag_tap1.s:IDCODE": str(ID1), "jtag_tap1.s:USR": "5",
                      "jtag_tap1.s:ULEN": "12", "jtag_tap1.s:IRLEN": "5", "jtag_tap1.s:UINIT": "0xABC"})
     return Assembler(files, defs).run()
@@ -264,14 +264,45 @@ def test_tap_trst_and_tlr():
     assert c.host_bytes(0) == [] and c.eng[0].ovr == 0
 
 
-def test_tap_too_fast_fails():
-    # negative: below the stated minimum (TCK high/low < HALF) the IDCODE read breaks in some slot phase
+@pytest.mark.parametrize("T,solo", [(32, False), (16, True)])
+def test_tap_too_fast_fails(T, solo):
+    # negative: just below the stated minimum (36 clk, solo 18) the session breaks in some slot phase
+    img = solo_img() if solo else None
     bits = tck_bits(session())
     want = model_tdo([tap()], bits)
     bad = 0
     for slot in range(4):
         try:
-            check_emu(want, *emu_run(bits, 16, slot)[2:])
+            check_emu(want, *emu_run(bits, T, slot, img=img)[2:])
         except AssertionError:
             bad += 1
     assert bad
+
+
+def solo_img():
+    src = open(os.path.join(PROG, "jtag_tap.s")).read() + "\n.slots 0, 0, 0, 0\n"
+    return Assembler([("jtag_tap.s", src)], {}).run()
+
+
+def test_tap_solo_rate():
+    # header: 2.78 MHz (TCK period 18 clk) in the solo slot map
+    bits = tck_bits(session())
+    want = model_tdo([tap()], bits)
+    for slot in range(4):
+        check_emu(want, *emu_run(bits, 18, slot, img=solo_img(), phase=slot * 0.25)[2:])
+
+
+@pytest.mark.parametrize("k", [15, 16, 17, 32])
+def test_tap_idcode_pause_at_word_boundary(k):
+    # exit from Shift-DR after k IDCODE bits (TDI ones), Pause-DR, resume for 24 bits: every TDO bit as the model
+    j = debug.Jtag().reset().goto("SHDR")
+    j.cmds += debug._chunks([1] * (k - 1), False, 0, None) + debug._chunks([1], False, 1, None)
+    j.state = "E1DR"
+    j.goto("PDR").clocks(2).goto("E2DR").goto("SHDR").clocks(24).goto("RTI")
+    bits = tck_bits(j)
+    for i, (tms, tdi) in enumerate(bits):
+        if tms == 0:
+            bits[i] = (0, 1)
+    want = model_tdo([tap()], bits)
+    c, drv, got, oe = emu_run(bits, 36, k % 4)
+    check_emu(want, got, oe)

@@ -1,6 +1,6 @@
 ; swd_dp.s - SWD DP emulator (ADIv5 debug port, target side): DPIDR, CTRL/STAT, ABORT, SELECT, RDBUFF on chip,
 ;            AP accesses and SELECT through a memory box served by the RP2350; WAIT, FAULT, parity, line reset
-; words: 188 + 5 box (MDROP = 1: 204 + 5) | clk/SWCLK: external | max SWCLK: 781 kHz back to back, 1.04 MHz with
+; words: 189 + 5 box (MDROP = 1: 209 + 5) | clk/SWCLK: external | max SWCLK: 781 kHz back to back, 1.04 MHz with
 ;        >= 2 idle cycles after each transaction (default slot map, ISS) | engines: 1
 ;        per DP (2 on one bus: MDROP = 1, DIO = 4 and TSEL for the second)
 ; pins: p0 = SWCLK (uio_in[3]), p1 = SWDIO (uio[1], DIO = 4: uio[4]; driven only for ACK and read data, also
@@ -8,7 +8,8 @@
 ; registers: DPIDR (read A0, value DPIDR); ABORT (write A0: STKERRCLR clears STICKYERR, WDERRCLR clears WDATAERR);
 ;       CTRL/STAT (A4: CSYSPWRUPREQ/CDBGPWRUPREQ stored, their ACKs read back equal, WDATAERR, STICKYERR; DPBANKSEL
 ;       ignored); SELECT (write A8) and AP accesses go to the host; RDBUFF (read AC) = value of the last AP read;
-;       RESEND (read A8) answers as RDBUFF. AP reads are posted: they return the previous AP read's value
+;       RESEND (read A8) answers as RDBUFF; ABORT DAPABORT is ignored (a stalled host box keeps
+;       AP accesses at WAIT). AP reads are posted: they return the previous AP read's value
 ; box (MEMMAP SWD_BOX + 5 * ENG): RDB_L, RDB_H (host), ST (chip: 0x10 | request = busy; host: 0 done, 0x20 done
 ;       with an AP error = STICKYERR), DL, DH (write data, chip). After an AP access or SELECT write the chip writes
 ;       ST (+ DL, DH) and pushes the request byte (0x10 | A3 A2 RnW APnDP); the host serves it (host/debug.py
@@ -16,9 +17,10 @@
 ;       get WAIT
 ; replies: OK / WAIT / FAULT (sticky flag set: everything but DPIDR read, CTRL/STAT read, ABORT write); no reply
 ;       (protocol error: start/stop/park/request parity, or anything but a DPIDR read after a line reset) -> lockout
-;       until a line reset (>= 50 ones counted from a transaction boundary, then a 0). Write data parity error ->
-;       WDATAERR, write ignored. MDROP = 1 (SWD v2 multidrop): TARGETSEL after a line reset gets no ACK and
-;       selects (data = TSEL) or deselects (lockout) this DP
+;       until a line reset: >= 50 ones from a transaction boundary, then a 0 (while locked out, 44 ones after any 0
+;       already count; ones sent inside a write data phase are taken as data: a line reset there needs ~90 ones). Write data parity error ->
+;       WDATAERR, write ignored. CTRL/STAT writes WAIT while the box is busy. MDROP = 1 (SWD v2 multidrop): TARGETSEL after a line reset gets no ACK and
+;       selects (data = TSEL) or deselects (lockout; also on a data parity error) this DP
 ; rule: SWCLK period >= 64 clk with transactions back to back (no idle cycles), >= 48 clk with >= 2 idle cycles
 ;       after each; host bits change at the falling edge; the DP drives ACK/data <= 6 clk + pad after a rising edge,
 ;       so a host sampling at the next falling edge has >= 26 clk - pad. Longest work: the ABORT effect after an AP
@@ -26,7 +28,7 @@
 ;       (the line floats high). MDROP: after a line reset a DPIDR read is answered without TARGETSEL
 
 .equ MDROP,  0
-.equ DPIDR,  0x0C1E1001 + (MDROP << 12)  ; RAO bit 0, version 1 (MDROP: 2)
+.equ DPIDR,  0x0C001001 + (MDROP << 12)  ; RAO bit 0, version 1 (MDROP: 2), PARTNO 0xC0, RES0 [19:17]
 .equ TSEL,   0x0C1E0001         ; TARGETSEL value that selects this DP (MDROP)
 .equ DIO,    1                  ; SWDIO pad: 1 or 4
 .equ SHC,    0x30               ; SHCFG: LSB first, input p1
@@ -83,8 +85,8 @@ abw:    cmp   R2, #0xFF
         @rise p0 : p1 <- 1
         li    R0, #eab
         jmp   ackw
-csw:    cmp   R2, #0x20
-        jc    nk2
+csw:    cmp   R2, #1
+        jc    nk1                       ; busy: WAIT (only DPIDR/CTRL-STAT reads and ABORT skip it)
         @rise p0 : p1 <- 1
         li    R0, #ecsw
         jmp   ackw
@@ -118,7 +120,13 @@ w1:     loop { @rise p0 : shin }        ; data 16..31
         wcfg  TAPCFG, R0
         jpar  perr
         ret                             ; effect
-perr:   li    R0, #0x80
+perr:
+.if MDROP
+        li    R0, #etsel
+        cmp   R0, L
+        jz    lck                       ; TARGETSEL with a parity error: deselected, no WDATAERR
+.endif
+        li    R0, #0x80
         or    C, R0                     ; WDATAERR
         jmp   idle
 tsr:
@@ -134,7 +142,8 @@ tsr:
 .endif
 
 ; ---------------- WAIT (010) / FAULT (001), then release
-lck:    jmp   lock                      ; in reach of the jc below
+lck:    p1 <- z                         ; in reach of the jc below (not a bare jmp: jump targets that are jmps fire)
+        jmp   lock
 nk1:    cmp   R2, #0xFF
         jc    lck
         @rise p0 : p1 <- 0              ; ACK bit 0

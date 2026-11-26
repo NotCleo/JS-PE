@@ -1,5 +1,5 @@
 ; jtag_tap.s - JTAG TAP emulator (IEEE 1149.1 target): 16-state TAP, IDCODE, one user DR, BYPASS, TRST
-; words: 84 (TRST = 0: 83) | clk/TCK: external | max TCK: 1.39 MHz (default slot map), 2.78 MHz solo (ISS) |
+; words: 94 (TRST = 0: 91) | clk/TCK: external | max TCK: 1.39 MHz (default slot map), 2.78 MHz solo (ISS) |
 ;        engines: 1 per TAP (chains: one engine per TAP)
 ; pins: p0 = TCK (uio_in[3]), p1 = TMS (uio_in[0]), p2 = TDO out (uio[2], TDOPAD = 7: uio[7]; released outside
 ;       Shift-xR) with its input bound to TRST (uio_in[4], active low), p3 = TDI (uio_in[1]; TDIPIN = bind source)
@@ -98,8 +98,17 @@ sil:    loop { @rise p0 : shin }
         mov   R2, C
         jmp   sil
 shxd:   shin                            ; exit edge: last bit
+.if TRST
+        jlo   p2, tlr                   ; TRST fell with the exit edge (watcher 0 won)
+.endif
         p2 <- z
         watch #WT
+        jw    x1dr                      ; the exit edge completed a 16-bit word:
+        cmp   R0, #IDC
+        jnz   x1dr
+        mov   C, S                      ; IDCODE halves swapped here (Pause/Exit2 resume)
+        mov   S, R2
+        mov   R2, C
 x1dr:   @rise p0 : jhi p1, udr          ; Exit1-DR
 pdr:    @rise p0 : jlo p1, pdr          ; Pause-DR
 x2dr:   @rise p0 : jhi p1, udr          ; Exit2-DR
@@ -116,6 +125,8 @@ udr:    cmp   R0, #USR                  ; Update-DR
 ud1:    @rise p0 : jlo p1, rti
         jmp   sdr
 
+trl:    p2 <- z                         ; in reach of shxi (not a bare jmp: jump targets that are jmps fire)
+        jmp   tlr
 cir:    li    R2, #shxi                 ; Capture-IR: ..01
         wcfg  WV0, R2
         li    S, #1
@@ -127,6 +138,9 @@ shir:   p2 <- f                         ; Shift-IR
 sil2:   loop { @rise p0 : shin }
         jmp   sil2
 shxi:   shin
+.if TRST
+        jlo   p2, trl
+.endif
         p2 <- z
         watch #WT
 x1ir:   @rise p0 : jhi p1, uir          ; Exit1-IR

@@ -1,6 +1,6 @@
 ; swd_host.s - SWD host (ADIv5 wire protocol, probe side): transactions with ACK handling, raw bit sequences
-; words: 68 | clk/SWCLK: BIT (10 as written) | max: 8.3 MHz (BIT 6); the target has BIT - 4 clk - pad to drive
-;        SWDIO after a rising edge (BIT 10: 120 ns) | engines: 1
+; words: 68 | clk/SWCLK: BIT (10 as written) | max: 8.3 MHz (BIT 6, SMP 3); a target driving SWDIO BIT - 4.5 clk
+;        after the rising edge at its pin is read, BIT - 1.8 clk is not (tested; BIT 10: 110 ns) | engines: 1
 ; pins: p0 = SWCLK (uio[3]), p1 = SWDIO (uio[1], driven or released; also the shift input, uio_in[1]); nRESET:
 ;       RP2350 GPIO. SWDIO needs a pull-up (Pmod) or a target that keeps it defined
 ; host: request byte (bit 0 = 1, as on the wire: start, APnDP, RnW, A2, A3, parity, stop, park; parity by the host)

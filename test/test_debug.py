@@ -83,7 +83,7 @@ async def test_dbg_r2_swd_host_to_dp(dut):
     box = 455 + 5
     await xfer(b, debug.swd_line_reset(), 8)
     r = await xfer(b, debug.swd_read(0, 0), 6)
-    assert r[0] == 1 and word(r[1:]) == 0x0C1E1001 and r[5] & 1 == debug.parity(0x0C1E1001), r
+    assert r[0] == 1 and word(r[1:]) == 0x0C001001 and r[5] & 1 == debug.parity(0x0C001001), r
     assert await xfer(b, debug.swd_write(0, 4, 0x50000000), 1) == [1]
     r = await xfer(b, debug.swd_read(0, 4), 6)
     assert r[0] == 1 and word(r[1:]) == 0xF0000000, r

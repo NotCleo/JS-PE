@@ -177,10 +177,10 @@ Program/host only: no change to the RTL, the ISA or the ISS. Status codes as abo
 | # | Family | Item | Status |
 |---|---|---|---|
 | 1.1 | Debug | JTAG controller (TAP walk, IR/DR shift streamed from the host) | DONE: jtag_ctrl.s 23 words, ≤ 6.25 MHz (D230) |
-| 1.2 | Debug | JTAG TAP emulator (IDCODE, BYPASS, IR/DR lengths, chains, TLR by TMS / TRST) | DONE: jtag_tap.s 84 words, ≤ 1.39 MHz (D231) |
+| 1.2 | Debug | JTAG TAP emulator (IDCODE, BYPASS, IR/DR lengths, chains, TLR by TMS / TRST) | DONE: jtag_tap.s 94 words, ≤ 1.39 MHz (D231) |
 | 1.3 | Debug | SWD host (request, ACK, WAIT/FAULT, parity, line reset, JTAG-to-SWD) | DONE: swd_host.s 68 words, ≤ 8.3 MHz (D232) |
-| 1.4 | Debug | SWD DP emulator (DPIDR, CTRL/STAT, SELECT, RDBUFF, WAIT/FAULT, parity error) | DONE: swd_dp.s 188 + 5 box words, ≤ 781 kHz back to back (D233) |
-| 1.5 | Debug | SWD v2 multidrop (TARGETSEL) | DONE: swd_dp.s `MDROP=1` (+16 words), host raw sequence (D233) |
+| 1.4 | Debug | SWD DP emulator (DPIDR, CTRL/STAT, SELECT, RDBUFF, WAIT/FAULT, parity error) | DONE: swd_dp.s 189 + 5 box words, ≤ 781 kHz back to back (D233) |
+| 1.5 | Debug | SWD v2 multidrop (TARGETSEL) | DONE: swd_dp.s `MDROP=1` (+20 words), host raw sequence (D233) |
 | 1.6 | Debug | SWO receive (UART/NRZ and Manchester, reusing uart_rx / manchester) | PART: NRZ DONE (uart_rx unchanged, ITM tests); Manchester PROG — measured: manchester.s needs a 0x55 preamble + SFD and is MSB first, SWO Manchester has one start bit and is LSB first (D234) |
 | 2.1 | PS/2 | Device: keyboard and mouse framing, clock generation, request-to-send, ACK | PROG |
 | 2.2 | PS/2 | Host: inhibit, request-to-send, receive, parity/timeout errors | PROG |
