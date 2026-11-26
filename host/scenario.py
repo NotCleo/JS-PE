@@ -149,8 +149,18 @@ def check(scn):
     if len(users) > 1 and not any(set(users) <= g for g in groups):
         err.append("LFSR: engines %s use the shared LFSR; list them in one lfsr_share group" % users)
     plan = gpio_plan(scn, img, err)
+    import fault
+    for st in expand(scn)[0]:                      # fault words: only to a reserved FAULT_W + e, armed and defined
+        if "fault" in st:
+            e, w = st["fault"]["e"], st["fault"]["word"]
+            if MAP["FAULT_W"] + e not in img.reserved:
+                err.append("fault: E%d has no reserved fault word (FAULTS=1 build of its program)" % e)
+            try:
+                fault.check(w)
+            except ValueError as x:
+                err.append("fault: %s" % x)
     if err:
-        raise Conflict(err)
+        raise Conflict(sorted(set(err), key=err.index))
     return img, plan
 
 
@@ -169,6 +179,8 @@ def gpio_plan(scn, img, err):
                 err.append("pads: %s listed twice (%s, %s)" % (pname(k, n), ext[key], who))
                 continue
             ext[key] = who
+            if who == "rp" and od:
+                err.append("pads: %s: gpio.rp pins are push-pull RP2350 outputs; :od / :shared only in gpio.pmod" % s)
             if key in LINK:
                 err.append("pads: %s is a host link pad" % pname(k, n))
             elif k == "uo":
@@ -179,10 +191,16 @@ def gpio_plan(scn, img, err):
             plan[who].append(key)
             if od == "od":
                 plan["od"].add(key)
+    owner = {}
     for st in scn.get("stimulus", []) or []:
         for s in partner_pins(st.get("partner")):
-            if pin(s)[:2] not in ext:
+            key = pin(s)[:2]
+            if key not in ext:
                 err.append("pads: partner pin %s not in gpio.rp or gpio.pmod" % s)
+            if key in owner:
+                err.append("pads: two partners on %s" % pname(*key))
+            owner[key] = st["partner"].get("id", st["partner"]["model"])
+    plan["partner"] = owner
     plan["inputs"] = [(k, n) for k in ("ui", "uo", "uio") for n in range(8)
                       if (k, n) not in plan["rp"] and (k, n) not in plan["pmod"]]
     return plan
@@ -356,6 +374,10 @@ class Run:
                 self._attach(Idle(self, 0, st["partner"]), st["partner"], idle=True)
         self.out, self.notes = [[] for _ in range(4)], []
         self.pi, self.cur = (len(hl.got) if hl else 0), None
+        g = scn.get("gpio") or {}
+        self.pull = {("uio", i - 8) for d in img.engines.values() for i, cfg in d["pads"].items() if i >= 8 and cfg & 0x20}
+        self.pull |= {pin(x)[:2] for who in ("rp", "pmod") for x in (g.get(who) or []) if pin(x)[2] == "od"}
+        self.timed_out = False
         self.done_at = None
 
     def _attach(self, p, a, idle=False):
@@ -428,7 +450,7 @@ class Run:
             drv = [] if v is None else [v]
             if c.uio_oe >> n & 1:
                 drv.append(c.uio_out >> n & 1)
-            uio |= (min(drv) if drv else int(mode == "od")) << n
+            uio |= (min(drv) if drv else int(mode == "od" or ("uio", n) in self.pull)) << n
         for p, _ in act.values():
             p.observe(t, ui, uio)
         return ui, uio
@@ -471,28 +493,36 @@ class Run:
         res = [(x, *judge(x, self, final=True)) for x in self.scn["expect"]]
         if not all(self.fired):
             res.append(({}, False, "%d of %d stimuli never fired" % (self.fired.count(False), len(self.fired))))
+        if self.timed_out:
+            res.append(({}, False, "timeout: expectations not all met within %d clk" % self.scn["timeout"]))
         return res
 
 
 def run_iss(scn, img, phase=0):
     wire = scn.get("link") == "wire"
     c = Chip(direct=not wire)
-    c.boot(img, phase=phase)
+    c.boot(img, phase=phase, run=not wire)
     if not wire:
         r = Run(scn, img, c)
         r.t0 = c.t_run
     else:
         from jspe_iss import HostLink
         r = Run(scn, img, c, HostLink(scn.get("link_B", 16)))
-        for _ in range(800):                         # boot() held H_RX low (a break): let its notice pass
+        for _ in range(800):                         # boot() held H_RX low (a break): let its notice pass, engines stopped
+            c.step(*r.inputs(fire=False))
+            r.after()
+        while c.slot != phase:
             c.step(*r.inputs(fire=False))
             r.after()
         r.restart()
+        c.start(sorted(img.engines))                 # RUN now: t0 = RUN on both ISS modes
     for _ in range(scn["timeout"]):
         c.step(*r.inputs())
         r.after()
         if r.finished():
             break
+    else:
+        r.timed_out = True
     return r.results(), r
 
 
@@ -511,7 +541,7 @@ def spi_decode(c, a, t0):
         return uo >> k[1] & 1 if k[0] == "uo" else ((uout >> k[1] & 1) if uoe >> k[1] & 1 else 1)
     mode, bits = a.get("mode", 0), a.get("bits", 8)
     rise = mode in (0, 3)
-    out, cur, prev = [], [], None
+    out, cur, prev, ragged = [], [], None, 0
     for t, uo, uout, uoe in c.pad_trace:
         if t < t0:
             continue
@@ -520,11 +550,12 @@ def spi_decode(c, a, t0):
             if cs == 0 and prev[0] != sck and sck == int(rise):
                 cur.append(mosi)
             if prev[1] == 0 and cs == 1:
+                ragged += len(cur) % bits != 0     # a frame that is not a whole number of words
                 out += [sum(b << (bits - 1 - i) for i, b in enumerate(cur[k:k + bits]))
                         for k in range(0, len(cur) - bits + 1, bits)]
                 cur = []
         prev = (sck, cs)
-    return out
+    return out, ragged
 
 
 def _decoder(name):
@@ -597,9 +628,10 @@ def judge(x, r, final):
         return ok, "pad %s uart: %d chars%s, drift %.3f (<= %.3f)" % (
             x["pad"], len(vals), "" if vals == list(x["data"]) else " %s" % [hex(v) for v in vals[:16]], drift, tol)
     if "spi" in x:
-        got = spi_decode(c, x["spi"], t0)
-        ok = got == list(x["data"])
-        return ok, "spi %s: %d words%s" % (x["spi"]["mosi"], len(got), "" if ok else " %s" % [hex(v) for v in got[:16]])
+        got, ragged = spi_decode(c, x["spi"], t0)
+        ok = got == list(x["data"]) and not ragged
+        return ok, "spi %s: %d words%s%s" % (x["spi"]["mosi"], len(got), ", %d ragged frames" % ragged if ragged else "",
+                                          "" if got == list(x["data"]) else " %s" % [hex(v) for v in got[:16]])
     if "clean" in x:
         what = x["clean"] if isinstance(x["clean"], list) else [x["clean"]]
         bad = []
@@ -607,11 +639,14 @@ def judge(x, r, final):
             for w in what:
                 if w in ("ovr", "late", "trap") and getattr(e, w, 0):
                     bad.append("E%d %s" % (e.idx, w))
+            if "halt" in what and e.halted:
+                bad.append("E%d halted" % e.idx)
         if "undef" in what and c.undef_reads:
             bad.append("undef reads %d" % c.undef_reads)
         if "notes" in what and r.notes:
             bad.append("notices %s" % [hex(v) for v in r.notes])
-        return (not bad), "clean %s: %s" % ("/".join(what), ", ".join(bad) or "none")
+        na = " (notes not observable: direct ISS has no link)" if "notes" in what and r.hl is None else ""
+        return (not bad), "clean %s: %s%s" % ("/".join(what), ", ".join(bad) or "none", na)
     raise Conflict(["unknown expect %s" % x])
 
 
@@ -630,11 +665,14 @@ def export_board(scn, img, plan, out_dir):
     import json
     stim, camp = expand(scn)
     hz = scn.get("clk_hz", img.clk or 50000000)
-    steps, notes = [], []
+    steps, notes, released, t_prev = [], [], set(), 0.0
     for st in stim:
         if "after" in st:
-            notes.append("event-triggered stimulus run at once after the previous one: %s" % st)
-        t_us = st.get("at", 0) * 1e6 / hz
+            notes.append("event-triggered stimulus runs with the previous step (no event trigger on the board): %s" % st)
+            t_us = t_prev
+        else:
+            t_us = st["at"] * 1e6 / hz
+        t_prev = t_us
         if "send" in st:
             s = st["send"]
             data = models.can_host_tx(s["can"][0], s["can"][1]) if "can" in s else list(s["data"])
@@ -646,9 +684,11 @@ def export_board(scn, img, plan, out_dir):
             if a["model"] == "square":
                 steps.append({"t_us": t_us, "pwm": [pin(a["pin"])[1], hz / (a["high"] + a["low"]),
                                                     a["high"] / (a["high"] + a["low"])]})
-            else:
-                steps.append({"t_us": t_us, "operator": "%s on %s (Pmod or bench device)" % (
-                    a["model"], ", ".join(partner_pins(a)))})
+            else:                                    # no on-board model: the pin stays an RP2350 input
+                keys = [pin(x)[:2] for x in partner_pins(a)]
+                released |= {k for k in keys if k in plan["rp"]}
+                steps.append({"t_us": t_us, "operator": "attach a %s device to %s (no on-board %s partner; "
+                              "the RP2350 leaves the pin an input)" % (a["model"], ", ".join(partner_pins(a)), a["model"])})
     exp = []
     for x in scn["expect"]:
         if any(k in x for k in BOARD_EXPECTS) and "from_campaign" not in x:
@@ -662,17 +702,19 @@ def export_board(scn, img, plan, out_dir):
             exp.append(y)
         else:
             exp.append({"skip": "needs a logic analyser or the partner model: %s" % sorted(x)})
-    bp = board_plan(plan)
+    bp = board_plan({**plan, "rp": [k for k in plan["rp"] if k not in released],
+                     "pmod": plan["pmod"] + sorted(released)})
     levels = {}                                      # RP-driven partner pins start at their idle level
     for st in stim:
         a = st.get("partner")
         for i, s in enumerate(partner_pins(a)):
             k, n, _ = pin(s)
-            if (k, n) in plan["rp"]:
+            if (k, n) in plan["rp"] and (k, n) not in released:
                 levels["%s%d" % ("ui_in" if k == "ui" else "uio", n)] = a.get("idle", [1] * 8)[i]
     bp["levels"] = levels
     d = {"name": scn["name"], "clk_hz": hz, "timeout_us": scn["timeout"] * 1e6 / hz, "steps": steps,
          "expect": exp, "notes": notes, **bp}
+    os.makedirs(out_dir, exist_ok=True)
     base = os.path.join(out_dir, scn["name"])
     open(base + ".bin", "wb").write(img.bin_bytes())
     open(base + ".json", "w").write(json.dumps(d, indent=1))
@@ -682,6 +724,8 @@ def export_board(scn, img, plan, out_dir):
 def run(src, backend="iss", phase=0, out_dir=None):
     scn = load(src)
     img, plan = check(scn)
+    if scn.get("backends") and backend not in scn["backends"]:
+        raise Conflict(["backend %s not in the scenario's backends %s" % (backend, scn["backends"])])
     if backend == "board":
         j, b = export_board(scn, img, plan, out_dir or ".")
         return True, "board files %s, %s: copy to the RP2350 with host/ and run scenario_board.run() (not run on hardware)" % (j, b)

@@ -4,7 +4,7 @@
 # Board: CAN bench bus (one pull-up, INTERFACING) with a second node on the Pmod; UART source on ui_in[7].
 name: can_uart
 clk_hz: 50000000
-backends: [iss, board]
+backends: [iss, rtl, board]
 programs:
   - {file: can.s, engines: [0, 1]}
   - {file: uart_tx.s, engines: [2], D: {ENG: 2}}

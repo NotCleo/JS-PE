@@ -21,9 +21,12 @@ SCN = os.environ.get("SCENARIO") or os.path.join(ROOT, "scenarios", "uart_echo.y
 async def test_scenario_rtl(dut):
     scn = S.load(SCN)
     img, _ = S.check(scn)
+    assert not scn.get("backends") or "rtl" in scn["backends"], "rtl not in backends %s" % scn["backends"]
     b = await bench(dut)
-    await b.load(img)
+    await b.load(img)                               # ends with RUN: t0 = now (direct ISS: RUN; link time differs)
+    b.parse()
     r = S.Run(scn, img, b.chip, hl=b.hl, sample=False)
+    r.pi, r.cur = b.pi, b.cur                       # a stream announced during the load stays selected
     b.pads = lambda t: r.inputs()
 
     def step_done():
@@ -34,6 +37,7 @@ async def test_scenario_rtl(dut):
     except AssertionError as x:
         if "timeout" not in str(x):
             raise
+        r.timed_out = True
     ok, text = S.report(scn["name"], r.results())
     for ln in text.splitlines():
         cocotb.log.info(ln)

@@ -113,3 +113,17 @@ Each example in [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host
 ## 9. Errors and recovery
 
 Every error is reported, nothing hangs the link: framing errors, breaks, unknown ops, data with no stream selected and refused commands give `ESC 0x8C`; a byte for a full RX FIFO sets that engine's OVR (`ESC 0x80|e`). Recovery from any host-side confusion: a break (H_RX low ≥ 11 bit times), then `SYNC`. After reset or deselect all state is lost and the host reloads (HOSTIF 6, 9).
+
+## 10. Cold start and scenarios
+
+**Cold start** (board power-up to RUN; [scenario_design.md](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/scenario_design.md), D226; calls from tt-micropython-firmware @15ba5ce, [host/coldstart.py](https://github.com/NotCleo/JS-PE/blob/main/host/coldstart.py), not run on hardware):
+
+1. config.ini `[DEFAULT] mode = ASIC_MANUAL_INPUTS` and a `[tt_um_notcleo_jspe]` section with the same mode and `start_in_reset = yes`. The firmware's default `ASIC_RP_CONTROL` turns every `ui_in` into an RP2350 output at boot (`begin_asiconboard`), which fights any Pmod that drives `ui_in`. All `ui_in` DIP switches off.
+2. `tt.shuttle.tt_um_notcleo_jspe.enable()`, `tt.reset_project(True)`, `tt.pins.project_clk_driven_by_RP2(True)`, `tt.clock_project_PWM(clk_hz)`.
+3. Every chip-facing pin: `.pull = None` (the firmware default is `PULL_DOWN`), `tt.uio_oe_pico.value = 0`.
+4. Still in reset: only `ui_in3` (H_RX, driven high) and the scenario's `gpio.rp` pins become push-pull outputs, each after a read that must be low (high = DIP switch or Pmod contention, abort; RP2350 A2 erratum E9 may make a floating input read high, bench check pending); `gpio.pmod` pins and everything else stay inputs without pulls. Then `tt.reset_project(False)`: `uio` high-Z, `uo_out` 0, engines stopped, and no break on H_RX.
+5. `SYNC`, check the ID, `load()` the `.bin` (section 6), stimulus; at the end `STOP`, `RST`, `tt.reset_project(True)`, and the `gpio.rp` pins back to inputs.
+
+While engines run: `RDMEM` of at most 4 / 11 words at B = 16 / 8 (D088), one reply operation at a time (a new one replaces the old, D085), and none at all while a bus with a turnaround deadline is active (USB, usb_ls_design.md §4).
+
+**Scenario runner** ([host/scenario.py](https://github.com/NotCleo/JS-PE/blob/main/host/scenario.py), [scenarios/](https://github.com/NotCleo/JS-PE/tree/main/scenarios)): one YAML file names the programs and `-D` options, engines, the pins the RP2350 or a Pmod drives, stimulus (host writes, fault arming or a seeded campaign, partner devices) and expected streams, events, pad waveforms and partner verdicts with tolerances. Before anything is loaded it rejects conflicts: an engine, pad or memory region claimed twice, a chip-driven pad also driven from outside (`:od` / `:shared` excepted), link pads, slot maps that disagree, more than one LFSR user without `lfsr_share`, `CLK_HZ` mismatch. `make scenario S=scenarios/uart_echo.yaml` runs it on the ISS, `BACKEND=rtl` on the RTL (cocotb, lockstep with the ISS over the real link), `BACKEND=board` writes a JSON plan and the `.bin` for [host/scenario_board.py](https://github.com/NotCleo/JS-PE/blob/main/host/scenario_board.py) (MicroPython, not run on hardware: host writes, faults, PWM partners and stream checks; pad and partner-model checks are reported SKIP, other partners become operator steps on pins the RP2350 leaves as inputs, and any SKIP or operator step ends the run INCOMPLETE). Output: one PASS/FAIL line per expectation, then the verdict; exit code 0 / 1, 2 = rejected.

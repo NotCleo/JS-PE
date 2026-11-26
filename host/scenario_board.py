@@ -2,7 +2,8 @@
 # PC: python host/scenario.py <file> --backend board --out build -> <name>.json + <name>.bin; copy both and host/
 # (jspe.py, coldstart.py, monitor.py, measure.py, this file) to the board, then scenario_board.run("<name>.json").
 # Supports send / fault stimuli, square partners (PWM), stream / events / fifo / decode expects; other partners are
-# printed as operator steps, pad / SPI / partner-model expects are reported SKIP (need a logic analyser).
+# printed as operator steps (their pins stay inputs), pad / SPI / partner-model expects are reported SKIP (need a
+# logic analyser); a run with any SKIP or operator step ends INCOMPLETE, never PASS.
 import json
 import time
 from machine import Pin, UART, PWM
@@ -56,6 +57,7 @@ def run(plan_path, bin_path=None):
     kw["baudrate"] = int(p["clk_hz"]) // 16
     link = jspe.Link(1, int(p["clk_hz"]), **kw)
     link.sync()
+    link.notes.clear()                               # nothing before SYNC counts
     link.load(bin_path)                              # ends with RUN
     t0 = time.ticks_us()
     pwms = []
@@ -76,15 +78,19 @@ def run(plan_path, bin_path=None):
         link.poll()
     for w in pwms:
         w.deinit()
-    link.op_noflow(0x2F)                             # STOP all engines (as the loader's RST record)
+    link.op_noflow(0x2F)                             # STOP + RST all engines (as the loader's RST record): pads released
+    link.op(0x5F)
     coldstart.release(tt, p["rp_ui"], p["rp_uio"])
-    verdict = True
+    verdict, partial = True, any("operator" in st for st in p["steps"])
     for x in p["expect"]:
         ok, d = judge(x, link)
         print(("SKIP" if ok is None else "PASS" if ok else "FAIL"), d)
         verdict = verdict and ok is not False
+        partial = partial or ok is None
     if link.notes:
         print("FAIL notices", [hex(v) for v in link.notes])
         verdict = False
-    print(("PASS" if verdict else "FAIL"), p["name"])
-    return verdict
+    # skipped checks or operator-provided partners: never a plain PASS
+    word = "FAIL" if not verdict else "INCOMPLETE" if partial else "PASS"
+    print(word, p["name"])
+    return word

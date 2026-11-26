@@ -76,9 +76,19 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -r test/requirements.txt pyyaml
 make lint        # Verilator lint
 make swtest      # assembler and simulator tests
-make test        # 45 system tests, RTL against the simulator
+make test        # system tests, RTL against the simulator
 make formal B=arb
 ```
+
+Run a scenario (programs, pins, stimulus and expected traffic in one YAML file; conflicts are rejected before load):
+
+```sh
+make scenario S=scenarios/uart_echo.yaml               # ISS: PASS/FAIL per expectation
+make scenario S=scenarios/uart_echo.yaml BACKEND=rtl   # same file on the RTL (cocotb, lockstep with the ISS)
+make scenario S=scenarios/can_uart.yaml BACKEND=board  # build/can_uart.json + .bin for host/scenario_board.py
+```
+
+Seven examples in [scenarios/](https://github.com/NotCleo/JS-PE/tree/main/scenarios): UART echo, UART → SPI bridge, seeded fault campaign, UART monitor, pulse meter, USB enumeration, CAN + UART on all four engines. The board backend and the cold start ([HOST_INTERFACE 10](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md)) are written but not run on hardware.
 
 Assemble a program:
 
@@ -120,7 +130,7 @@ Programs: [docs/spec/programs/](https://github.com/NotCleo/JS-PE/tree/main/docs/
 
 None of this has run on a board yet; the same sequence runs against the RTL in the tests.
 
-1. Select the project, clock it from the RP2350 at 48 MHz and reset it (`tt.shuttle.tt_um_notcleo_jspe.enable()`, `tt.clock_project_PWM(48_000_000)`).
+1. Select the project, clock it from the RP2350 at 48 MHz and reset it (`tt.shuttle.tt_um_notcleo_jspe.enable()`, `tt.clock_project_PWM(48_000_000)`). Put `mode = ASIC_MANUAL_INPUTS` in the firmware's config.ini so the RP2350 drives only the `ui_in` pins a scenario names, not all eight (cold start: [HOST_INTERFACE 10](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md), [host/coldstart.py](https://github.com/NotCleo/JS-PE/blob/main/host/coldstart.py)).
 2. Connect with the host library: `sync()` checks the chip ID.
 3. `load("x.bin")` checks the image was built for the same clock, writes the program, reads it back, sets up the pads and starts the engines.
 4. Exchange data with `send` and `recv`; program events and errors arrive through `poll`.
@@ -255,7 +265,8 @@ More: [AI usage](https://github.com/NotCleo/JS-PE/blob/main/docs/AI_USAGE.md).
 | [test/](https://github.com/NotCleo/JS-PE/tree/main/test) | cocotb system tests and block tests |
 | [sw/](https://github.com/NotCleo/JS-PE/tree/main/sw) | assembler, simulator, ISA generator and their tests |
 | [formal/](https://github.com/NotCleo/JS-PE/tree/main/formal) | formal proofs and results |
-| [host/](https://github.com/NotCleo/JS-PE/tree/main/host) | MicroPython host library and demos |
+| [host/](https://github.com/NotCleo/JS-PE/tree/main/host) | MicroPython host library and demos, scenario runner (PC) |
+| [scenarios/](https://github.com/NotCleo/JS-PE/tree/main/scenarios) | scenario files for host/scenario.py (ISS, RTL, board) |
 | [docs/spec/](https://github.com/NotCleo/JS-PE/tree/main/docs/spec) | the spec and the example programs |
 | [docs/](https://github.com/NotCleo/JS-PE/tree/main/docs) | reader docs and the decision log |
 | [docs/history/](https://github.com/NotCleo/JS-PE/tree/main/docs/history), [docs/ai/](https://github.com/NotCleo/JS-PE/tree/main/docs/ai) | design-process records and the prompt list |

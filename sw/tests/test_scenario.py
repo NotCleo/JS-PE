@@ -102,17 +102,25 @@ def test_timeout_fails(tmp_path):
     t = UART_RX.replace("data: [0x12, 0x34, 0xFE], within: 3000", "data: [0x12, 0x34, 0xFE, 0x00]") \
         .replace("timeout: 20000", "timeout: 4000")
     ok, text = S.run(write(tmp_path, t % '["ui_in[7]"]'))
-    assert not ok and "FAIL stream E1: 3 entries" in text
+    assert not ok and "FAIL stream E1: 3 entries" in text and "FAIL timeout: expectations not all met" in text
 
 
-def test_event_trigger_and_fault(tmp_path):
+def test_event_trigger_never_fires(tmp_path):
     # the second send waits for nothing that ever comes: the report names the unfired stimulus
     t = UART_TX % "[0x55, 0xA5, 0x00, 0xFF]"
     t = t.replace("timeout: 20000", "timeout: 20000\nsettle: 100").replace(
-        "stimulus:\n", "stimulus:\n  - {after: {e: 0, evt: 9}, send: {e: 0, data: [1]}}\n"
-                       "  - {at: 10, fault: {e: 0, word: 0}}\n")
+        "stimulus:\n", "stimulus:\n  - {after: {e: 0, evt: 9}, send: {e: 0, data: [1]}}\n")
     ok, text = S.run(write(tmp_path, t))
-    assert not ok and "1 of 3 stimuli never fired" in text
+    assert not ok and "1 of 2 stimuli never fired" in text
+
+
+def test_fault_stimulus_checked(tmp_path):
+    t = UART_TX % "[0x55]"
+    arm = "stimulus:\n  - {at: 10, fault: {e: 0, word: %s}}\n"
+    rejects(write(tmp_path, t.replace("stimulus:\n", arm % "0x9000")), "E0 has no reserved fault word")
+    t2 = t.replace("{file: uart_tx.s, engines: [0]}", "{file: uart_tx.s, engines: [0], D: {FAULTS: 1}}")
+    rejects(write(tmp_path, t2.replace("stimulus:\n", arm % "0x8003")), "unarmed or undefined TYPE")
+    S.check(S.load(write(tmp_path, t2.replace("stimulus:\n", arm % "0x9000"))))
 
 
 def test_board_plan(tmp_path):
@@ -187,9 +195,57 @@ def test_reject_push_pull_pad_driven(tmp_path):
 
 
 def test_od_pad_shared_ok(tmp_path):
-    p = two(tmp_path, stub(0, 0, ".pad uio2, p0, od"), stub(1, 8), 'gpio: {rp: ["uio[2]:od"]}')
+    p = two(tmp_path, stub(0, 0, ".pad uio2, p0, od"), stub(1, 8), 'gpio: {pmod: ["uio[2]:od"]}')
     _, plan = S.check(S.load(p))
-    assert S.board_plan(plan)["rp_uio"] == [2]
+    assert S.board_plan(plan)["pmod"] == ["uio[2]"] and S.board_plan(plan)["rp_uio"] == []
+
+
+def test_reject_rp_open_drain(tmp_path):
+    # the board drives gpio.rp pins push-pull: an od or shared line must be a Pmod
+    for m in ("od", "shared"):
+        p = two(tmp_path, stub(0, 0, ".pad uio2, p0, od"), stub(1, 8), 'gpio: {rp: ["uio[2]:%s"]}' % m)
+        rejects(p, "gpio.rp pins are push-pull")
+
+
+def test_reject_two_partners_one_pin(tmp_path):
+    t = UART_RX.replace("stimulus:\n", "stimulus:\n  - {at: 900, partner: {model: square, id: sq, pin: \"ui_in[7]\", "
+                                       "high: 10, low: 10}}\n")
+    rejects(write(tmp_path, t % '["ui_in[7]"]'), "two partners on ui_in[7]")
+
+
+def test_od_lines_read_high_when_released(tmp_path):
+    # chip od pad, no partner: the ISS sees the pull-up (a CAN bus left alone is recessive, not stuck dominant)
+    t = """
+    name: can
+    programs: [{file: can.s, engines: [0, 1]}]
+    lfsr_share: [[0, 1]]
+    expect: [{clean: ovr}]
+    timeout: 10
+    """
+    scn = S.load(write(tmp_path, t))
+    img, _ = S.check(scn)
+    c = S.Chip()
+    c.boot(img)
+    r = S.Run(scn, img, c)
+    assert not c.uio_oe >> 4 & 1 and r.inputs()[1] >> 4 & 1
+
+
+def test_spi_ragged_frame():
+    # 9 clocks with bits 8: a ragged frame must not pass silently
+    class C:
+        pad_trace = []
+    t, tr = 0, C.pad_trace
+    def put(cs, sck, mosi):
+        nonlocal t
+        tr.append((t, 0, cs | mosi << 1 | sck << 3, 0x0B))
+        t += 1
+    put(1, 0, 0)
+    for k in range(9):
+        put(0, 0, 1)
+        put(0, 1, 1)
+    put(1, 0, 0)
+    got, ragged = S.spi_decode(C, {"sck": "uio[3]", "cs": "uio[0]", "mosi": "uio[1]"}, 0)
+    assert got == [0xFF] and ragged == 1
 
 
 def test_reject_two_chip_owners(tmp_path):
@@ -303,3 +359,20 @@ def test_board_export(tmp_path):
     assert len(faults) == 6 and all(a == S.MAP["FAULT_W"] for a, _ in faults)
     assert len(d["expect"][0]["data"]) == 30 and d["expect"][1] == {"skip": d["expect"][1]["skip"]}
     assert any("operator" in s for s in d["steps"])  # the jumper partner is an operator step on the board
+
+
+def test_backends_honoured(tmp_path):
+    with pytest.raises(S.Conflict) as x:
+        S.run(os.path.join(SCN_DIR, "uart_monitor.yaml"), backend="rtl")
+    assert "not in the scenario's backends" in x.value.msgs[0]
+
+
+def test_board_export_releases_unmodelled_partner(tmp_path):
+    # bridge: the UART source on ui_in[7] has no on-board model: the pin stays an input, the step is an operator step
+    scn = S.load(os.path.join(SCN_DIR, "bridge_uart_spi.yaml"))
+    img, plan = S.check(scn)
+    import json
+    j, _ = S.export_board(scn, img, plan, str(tmp_path / "new" / "dir"))
+    d = json.load(open(j))
+    assert d["rp_ui"] == [3] and "ui_in[7]" in d["pmod"] and "ui_in7" not in d["levels"]
+    assert any("operator" in s and "ui_in[7]" in s["operator"] for s in d["steps"])
