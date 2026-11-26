@@ -941,3 +941,111 @@ class UsbEdges:
                 self.xmax = max(self.xmax, self.se0)
             self.se0 = 0
         return v
+
+
+# ---------------- JTAG (IEEE 1149.1) ----------------
+# TAP state -> (next with TMS 0, next with TMS 1), from the standard's state diagram
+JTAG_NEXT = {"TLR": ("RTI", "TLR"), "RTI": ("RTI", "SDR"), "SDR": ("CDR", "SIR"), "CDR": ("SHDR", "E1DR"),
+             "SHDR": ("SHDR", "E1DR"), "E1DR": ("PDR", "UDR"), "PDR": ("PDR", "E2DR"), "E2DR": ("SHDR", "UDR"),
+             "UDR": ("RTI", "SDR"), "SIR": ("CIR", "TLR"), "CIR": ("SHIR", "E1IR"), "SHIR": ("SHIR", "E1IR"),
+             "E1IR": ("PIR", "UIR"), "PIR": ("PIR", "E2IR"), "E2IR": ("SHIR", "UIR"), "UIR": ("RTI", "SDR")}
+
+
+class JtagTap:
+    # One TAP: TMS/TDI sampled at TCK rise, TDO changes at TCK fall (None = high-Z outside Shift-xR).
+    # regs: opcode -> [length, value]; IDCODE register 32 bits; unknown opcodes select BYPASS (1 bit, captures 0).
+    def __init__(self, irlen=4, idcode=None, idc_op=None, regs=None):
+        self.irlen, self.idcode = irlen, idcode
+        self.idc_op = idc_op if idc_op is not None else (1 if irlen > 1 else 0)
+        self.regs = {k: list(v) for k, v in (regs or {}).items()}
+        self.state, self.sr, self.n, self.tdo = "TLR", 0, 1, None
+        self.ir = self.reset_ir()
+        self.updates = []
+
+    def reset_ir(self):
+        return self.idc_op if self.idcode is not None else (1 << self.irlen) - 1
+
+    def trst(self):
+        self.state, self.tdo, self.ir = "TLR", None, self.reset_ir()
+
+    def dr(self):
+        if self.idcode is not None and self.ir == self.idc_op:
+            return 32, self.idcode
+        if self.ir in self.regs:
+            return self.regs[self.ir][0], self.regs[self.ir][1]
+        return 1, 0
+
+    def rise(self, tms, tdi):
+        s = self.state
+        if s == "CDR":
+            self.n, self.sr = self.dr()
+        elif s == "CIR":
+            self.n, self.sr = self.irlen, 1
+        elif s in ("SHDR", "SHIR"):
+            self.sr = (self.sr >> 1) | (tdi << (self.n - 1))
+        self.state = JTAG_NEXT[s][tms]
+
+    def fall(self):
+        s = self.state
+        if s == "TLR":
+            self.ir = self.reset_ir()
+        elif s == "UIR":
+            self.ir = self.sr
+        elif s == "UDR" and self.ir in self.regs:
+            self.regs[self.ir][1] = self.sr
+            self.updates.append((self.ir, self.sr))
+        self.tdo = self.sr & 1 if s in ("SHDR", "SHIR") else None
+
+
+class JtagChain:
+    # TAPs in series: TDI -> taps[0] -> ... -> taps[-1] -> TDO. Watches TCK/TMS/TDI as (t, tck, tms, tdi) samples;
+    # TDO of the last TAP changes `delay` clk after the TCK fall it was seen at.
+    def __init__(self, taps, delay=1.0):
+        self.taps, self.delay, self.prev, self.ch = taps, delay, None, []
+
+    def step(self, t, tck, tms, tdi):
+        if self.prev is not None and tck != self.prev:
+            if tck:
+                ins = [tdi] + [x.tdo if x.tdo is not None else 1 for x in self.taps[:-1]]
+                for x, d in zip(self.taps, ins):
+                    x.rise(tms, d)
+            else:
+                for x in self.taps:
+                    x.fall()
+                v = self.taps[-1].tdo
+                self.ch.append((t + self.delay, 1 if v is None else v))
+        self.prev = tck
+
+    def level(self, t):
+        return level_at(self.ch, t, 1)
+
+
+class JtagDriver:
+    # Probe side in continuous time: bits = [(tms, tdi)], one TCK period T each; TMS/TDI change at the falling edge,
+    # TCK rises T/2 later (TCK idles low); TDO is read at each rising edge from the chip's pad history.
+    def __init__(self, T, bits, t0=20.0, trst=()):
+        self.T, self.bits, self.t0 = T, list(bits), t0
+        self.rise_t = [t0 + i * T + T / 2 for i in range(len(self.bits))]
+        self.end = t0 + len(self.bits) * T
+        self.trst_iv = list(trst)
+
+    def _k(self, t):
+        return int((t - self.t0) // self.T) if t >= self.t0 else -1
+
+    def tck(self, t):
+        k = self._k(t)
+        return 1 if 0 <= k < len(self.bits) and t - (self.t0 + k * self.T) >= self.T / 2 else 0
+
+    def tms(self, t):
+        k = min(self._k(t), len(self.bits) - 1)
+        return self.bits[k][0] if k >= 0 else 1
+
+    def tdi(self, t):
+        k = min(self._k(t), len(self.bits) - 1)
+        return self.bits[k][1] if k >= 0 else 1
+
+    def trst(self, t):
+        return 0 if any(a <= t < b for a, b in self.trst_iv) else 1
+
+    def sample(self, tdo_changes, init=1):
+        return [level_at(tdo_changes, t - 1e-9, init) for t in self.rise_t]

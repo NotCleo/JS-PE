@@ -24,7 +24,8 @@ PROGS = [("uart_tx", {"ENG": 0}), ("uart_rx", {"ENG": 0}), ("spi_ctrl", {"ENG": 
          ("manchester", {"ENG_TX": 0, "ENG_RX": 1, "CVCHK": 0}),
          ("can", {"ENG_TX": 0, "ENG_RX": 1}), ("can", {"ENG_TX": 1, "ENG_RX": 0}),
          ("meter", {"ENG": 0}), ("meter", {"ENG": 0, "EXT": 1}), ("freq", {"ENG": 0, "GATE": 2000}),
-         ("autobaud", {"ENG": 0}), ("nec", {"ENG": 0, "CLK_HZ": 200000, "PRE": 0})]
+         ("autobaud", {"ENG": 0}), ("nec", {"ENG": 0, "CLK_HZ": 200000, "PRE": 0}),
+         ("jtag_ctrl", {"ENG": 0})]
 
 
 def never(img, a):
@@ -105,6 +106,9 @@ def stress(name, img, ph, seed, live):
         return can_stress(img, ph, r)
     if name == "nec":
         return nec_stress(img, ph, r)
+    if name == "jtag_ctrl":
+        from test_jtag import scenario
+        return scenario(img, ph, r.randrange(4))
     if name == "freq":                                 # 3-clk square: rises merge, the evt 2 path
         c = boot(img, ph)
         n, t0, fr = 7000, c.cycle + 20, r.random()
