@@ -2,6 +2,8 @@
 
 Host-only; not run on hardware. D219.
 
+Validation (emulated): sw/tests/test_pio_link.py, test/test.py `test_pio_link_b4`, and the PIO model checked against pico-examples (`scripts/pio_check_pico.py`) and rp2040-pio-emulator (`scripts/pio_check_xemu.py`); see HOST_INTERFACE 8.
+
 ## Clocking (exact ratios)
 
 | sys | `clk` (PWM) | PIO div, 8 cyc/bit | Link |
@@ -49,7 +51,7 @@ The sample falls at 0.5 bit + 0–1 cycle: the 2-cycle input sync delays detecti
 
 ## DMA ring
 
-A DMA channel moves bytes from RXF + 3 to a 16 KB write-ring (32 KB allocated for alignment), DREQ PIO RX, count 2^28 − 1, chained to itself. Python takes the produced total from `count`; produced − consumed > 16 KB means an overrun, then resync (HOSTIF 9). The ring holds 13.6 ms. Load data goes by DMA to TXF; ops by `sm.put`.
+A DMA channel moves bytes from RXF + 3 to a 16 KB write-ring (32 KB allocated for alignment), DREQ PIO RX, count 2^28 − 1, chained to itself. Python takes the produced total from `count`; produced − consumed > 16 KB means an overrun, then resync (HOSTIF 9). The ring holds 13.6 ms. TX goes by `sm.put` of an array (C loop, blocks while the FIFO is full); no TX DMA channel.
 
 ## Pass-through (high rates)
 

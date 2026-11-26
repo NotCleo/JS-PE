@@ -9,7 +9,7 @@ How the RP2350 on the Tiny Tapeout demo board talks to the chip. Normative text:
 | Pins | H_RX = `ui_in[3]` (RP2350 GPIO20, UART1 TX), H_TX = `uo_out[4]` (GPIO37, UART1 RX), H_RDY = `uo_out[5]` (GPIO38, UART1 CTS, **0 = ready**) |
 | Byte | 8N1, LSB first, idle high |
 | Bit time | 16 clk after reset; 8 or 4 clk via register LINK. At 50 MHz: 3.125 / 6.25 / 12.5 Mbaud |
-| Clocking | `clk` and the host baud rate come from one clock, so the ratio is exact. The host examples drive clk = 48 MHz because the RP2350 UART clock stays at 48 MHz under the TT firmware, giving 3 Mbaud at 16 clk per bit (PINS.md 2) |
+| Clocking | `clk` and the host baud rate come from one clock, so the ratio is exact. The host examples drive clk = 48 MHz because the RP2350 UART clock stays at 48 MHz under the TT firmware, giving 3 Mbaud at 16 clk per bit (PINS.md 2). Option: a PIO link at 4 clk per bit, 12 Mbaud (system clock 96 MHz, `clk` = sys/2; [design](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/pio_link_design.md)); **emulated, not run on hardware** |
 | Flow control | H_RDY toward the host (a hardware CTS input stops within one byte); none toward the chip's transmitter, so the host buffers H_TX (≥ 4 KB ring recommended) |
 
 ## 2. Framing
@@ -85,6 +85,7 @@ Pads are enabled only after initialisation, so no pad drives a wrong level while
 | Overhead | 1 link byte per data byte (2 for 0x1B); stream change +2; event 2 bytes |
 | Host → FIFO latency | 9.5 B + 3 clk after the start bit (155 / 79 / 41 clk) |
 | FIFOs | 4 bytes each way per engine; H_RDY keeps 2 entries in reserve, so no host byte is lost |
+| With the PIO link (B = 4, 48 MHz) | 1.18 MB/s host → chip, 1.2 MB/s chip → host, into a 16 KB DMA ring; sustained only as fast as the consumer: on-board parsing unmeasured, pass-through to the PC over USB CDC assumed 0.8 MB/s (**unmeasured**). Emulated, not run on hardware |
 
 **Replies hold the chip → host link.** A reply (`RDMEM`, `RDREG`, `SYNC`) is sent before any stream byte, so engines that push without waiting must not lose bytes behind it. For a program whose receiver pushes at line rate (USB LS, CAN), the host sends no command with a reply while the bus is active. USB LS measured: one 4-byte `RDREG` reply at a packet tail overflowed the 4-entry FIFO at 16 clk per bit (usb_ls_design.md §9). Line levels are read on the RP2350's own GPIOs instead: the demo board wires every ASIC pin to the RP2350, and those GPIOs stay inputs with no pulls while the chip drives the pins.
 
@@ -93,13 +94,19 @@ Pads are enabled only after initialisation, so no pad drives a wrong level while
 | Call | Does |
 |---|---|
 | `Link(uart_id, clk_hz, B=16, **uart_kw)` | open the link UART (pass `flow=UART.CTS`, `cts=Pin(38)`, a large `rxbuf`) |
+| `Link(None, clk_hz, 16, pio=dict(sm=0))` | PIO link instead (state machines sm, sm + 1, one DMA channel; GPIO base 16); per-byte H_RDY: command bytes never wait, data bytes do |
+| `set_rate(B)` | `LINK` register, host baud change, `SYNC` (3 tries) |
+| `connect(clk_hz, uart_kw, pio, reset)` | PIO link at B = 4, else `reset()` and the hardware UART at B = 16 |
+| `forward(out, ms)` | pass-through: raw chip → host bytes to `out` (USB CDC), no decoding on the board; the PC decodes with `jspe.Parser` + host/monitor.py |
 | `sync()` | `SYNC`, check ID 0x4A10 |
 | `rdreg(r)`, `wrreg(r, v)` | host registers |
 | `rdmem(a, n)`, `wrmem(a, words)` | memory |
 | `load(path)` | replay a `.bin` (CLK check, RST, REG, MEM + read-back, EXEC, RUN) |
 | `send(e, data)` | `SEL e` twice (H_RDY then shows stream e), then data with 0x1B escaped |
 | `recv(e)` | stream bytes received from engine e so far |
-| `poll()` | parse incoming bytes into per-engine streams, `events` (engine, code, position) and `notes` |
+| `poll()` | parse incoming bytes into per-engine streams, `events` (engine, code, position) and `notes` (0x100 = PIO ring overrun: resync) |
+
+**PIO link status.** Validated without hardware only: `host/jspe.py` itself runs on a PIO model (`sw/pio_emu.py`) clocked with the ISS (sw/tests/test_pio_link.py) and one RTL case (test/test.py `test_pio_link_b4`). The model is checked against two independent references (scripts, not CI): the pico-examples `uart_tx`/`uart_rx` programs reproduce their documented timing on it, and our TX (forced bytes) equals the pico TX waveform cycle for cycle (`scripts/pio_check_pico.py`); our programs give the same waveform, instruction trace and RX FIFO on rp2040-pio-emulator, cycle for cycle (`scripts/pio_check_xemu.py`). Bench checks still open: link pins above GPIO31 (`gpio_base`) in MicroPython, USB CDC rate, on-board parse rate.
 
 Each example in [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples) enables the project with the TT SDK (`tt.shuttle.tt_um_notcleo_jspe.enable()`), drives `clk` with `tt.clock_project_PWM(48_000_000)`, holds reset while the link UART comes up, then `sync()`, `load()` and streams data. The RP2350 itself is the bus partner (PIO UART/SPI, `SoftI2C`, GPIO capture), so no external device is needed (D008).
 

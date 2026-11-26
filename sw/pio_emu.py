@@ -1,5 +1,5 @@
 # Cycle-stepped model of one RP2040/RP2350 PIO state machine (subset used by the host PIO link): 16-bit opcodes,
-# integer clock divider, delays, stalls, 4-deep FIFOs, no autopush/autopull, no side-set, no IRQ.
+# integer clock divider, delays, stalls, 4-deep FIFOs, side-set (incl. opt), IRQ set/clear flags; no autopush/autopull.
 # Inputs are passed in already synchronized (the 2-FF input synchronizer is modelled by the caller, per GPIO).
 from collections import deque
 
@@ -7,7 +7,7 @@ from collections import deque
 class SM:
     def __init__(self, prog, div=1, in_base=0, out_base=0, set_base=0, jmp_pin=0, out_count=1, set_count=1,
                  in_shift_right=True, out_shift_right=True, push_thresh=32, pull_thresh=32, wrap_target=0,
-                 wrap=None, levels=None):
+                 wrap=None, levels=None, sideset_count=0, sideset_opt=False, sideset_base=0, sm_index=0):
         assert 1 <= div == int(div)
         self.prog, self.div = list(prog), int(div)
         self.in_base, self.out_base, self.set_base, self.jmp_pin = in_base, out_base, set_base, jmp_pin
@@ -22,6 +22,10 @@ class SM:
         self.delay = self.cnt = 0
         self.txf, self.rxf = deque(), deque()
         self.stalled = False
+        self.ss_n, self.ss_opt, self.ss_base, self.idx = sideset_count, sideset_opt, sideset_base, sm_index
+        self.dbits = 5 - sideset_count - int(sideset_opt)       # delay bits left in the delay/side-set field
+        self.irq = 0                                            # IRQ flags (per PIO block on silicon)
+        self.t, self.trace = 0, None                            # trace: list of (cycle, pc) per executed instruction
 
     def put(self, w):
         assert len(self.txf) < 4
@@ -40,17 +44,31 @@ class SM:
         if self.cnt < self.div:
             return
         self.cnt = 0
+        t, self.t = self.t, self.t + 1
         if self.delay:
             self.delay -= 1
             return
-        op = self.prog[self.pc]
+        op, pc = self.prog[self.pc], self.pc
+        if self.trace is not None:
+            self.trace.append((t, pc))
         jumped = self.execute(op, inp)
+        self._side(op)                    # issued even when stalled; wins over out/set on the same pin
         self.stalled = jumped is None
         if jumped is None:
             return
         if not jumped:
             self._next()
-        self.delay = (op >> 8) & 31
+        self.delay = (op >> 8) & ((1 << self.dbits) - 1)
+
+    def _side(self, op):
+        if not self.ss_n:
+            return
+        f = (op >> 8 & 31) >> self.dbits
+        if self.ss_opt:
+            if not f >> self.ss_n:
+                return
+            f &= (1 << self.ss_n) - 1
+        self._pins(self.ss_base, self.ss_n, f)
 
     def exec_now(self, op, inp=lambda g: 1):
         # SMx_INSTR: runs at once, delay ignored
@@ -159,4 +177,9 @@ class SM:
             else:
                 self.y = v
             return False
-        raise AssertionError("irq not modelled")
+        clr, wait, idx = lo >> 6 & 1, lo >> 5 & 1, lo & 7
+        assert not wait, "irq wait not modelled"
+        if lo & 0x10:
+            idx = (idx & 4) | ((idx + self.idx) & 3)
+        self.irq = self.irq & ~(1 << idx) if clr else self.irq | 1 << idx
+        return False

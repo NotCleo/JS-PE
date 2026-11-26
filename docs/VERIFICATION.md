@@ -80,6 +80,7 @@ Test IDs refer to VERIF_PLAN 7–8. I = ISS (pytest), R = RTL lockstep (cocotb),
 | Manchester (not designed in) | same | yes | [test/test_manchester.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_manchester.py): M1–M4 TX, RX, errors, loop-back | Manchester encoder/decoder (offset, jitter) | 4/4 | blocks only | none |
 | CAN 2.0A (not designed in) | [test_can.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/test_can.py) (14) | yes | [test/test_can.py](https://github.com/NotCleo/JS-PE/blob/main/test/test_can.py): C1–C4 chip TX, chip RX, arbitration, errors | independent CAN node model | 4/4 | blocks only | none |
 | Host link, system | [test_hostlink.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/test_hostlink.py) (9) | — | [test/test.py](https://github.com/NotCleo/JS-PE/blob/main/test/test.py) (7): reset/SYNC, load/read-back, link rates, errors, random full chip | host-link model | 7/7 | link: 20 properties | none |
+| PIO host link (B = 4, host side, emulated) | [test_pio_link.py](https://github.com/NotCleo/JS-PE/blob/main/sw/tests/test_pio_link.py) (19): host/jspe.py on a PIO model + ISS | — | [test/test.py](https://github.com/NotCleo/JS-PE/blob/main/test/test.py) `test_pio_link_b4`: load/read-back, H_RDY hold, echo | PIO model checked against pico-examples UART programs and rp2040-pio-emulator, cycle for cycle (scripts below) | pass | — | not run on hardware |
 
 ## 6. How to rerun
 
@@ -93,6 +94,7 @@ Test IDs refer to VERIF_PLAN 7–8. I = ISS (pytest), R = RTL lockstep (cocotb),
 | mutation | `make mutate B=<block>` |
 | gate level | `make gl-fetch RUN=45553919240`, then `make gl-all` (flop fallback: `RUN=44625407065`, `MEM=flop`) |
 | area | `make area LIB=<sg13g2 typ liberty>` |
+| PIO model vs references (not CI) | `.venv/bin/python scripts/pio_check_pico.py`; `python3 -m venv build/pioemu-venv && build/pioemu-venv/bin/pip install rp2040-pio-emulator==0.88.0 && build/pioemu-venv/bin/python scripts/pio_check_xemu.py` |
 
 ## 7. Known gaps
 

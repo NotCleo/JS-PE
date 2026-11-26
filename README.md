@@ -133,6 +133,8 @@ mpremote run host/examples/uart.py
 
 Demos for UART, SPI, I2C, WS2812 and Manchester are in [host/examples/](https://github.com/NotCleo/JS-PE/tree/main/host/examples). The RP2350 acts as the bus partner, so no external device is needed. Details: [host interface](https://github.com/NotCleo/JS-PE/blob/main/docs/HOST_INTERFACE.md).
 
+Optional faster link: `host/jspe.py` can run the host link on the RP2350's PIO at 4 clk per bit (12 Mbaud, about 1.2 MB/s each way, 4x the UART), with a DMA ring and a pass-through mode that forwards raw bytes to the PC over USB. **Emulated, not run on hardware:** the host code runs on a PIO model with the ISS and the RTL, and the model is cross-checked against the pico-examples UART programs and an independent PIO emulator ([design](https://github.com/NotCleo/JS-PE/blob/main/docs/spec/pio_link_design.md)).
+
 ----
 
 ## 7. Pins and wiring
