@@ -17,7 +17,7 @@ What can be wired to the chip and what it needs. Pin maps and parts come from [d
 
 | Device class | Protocol / modes | Pins (default map) | Extra parts | Status |
 |---|---|---|---|---|
-| UART device at 3.3 V (USB-UART bridge, GPS, BLE module) | UART 5–9 data bits, parity, 1/1.5/2 stop, inverted, MSB first, RTS/CTS | TXD `uo_out[0]`, RXD `ui_in[7]`, RTS `uo_out[1]`, CTS `ui_in[2]` | none | supported (simulation) |
+| UART device at 3.3 V (USB-UART bridge, GPS, BLE module) | UART 5–9 data bits, parity, 1/1.5/2 stop, inverted, MSB first (RTS/CTS: pins reserved, program pending, PROTOCOL_MATRIX 6.1) | TXD `uo_out[0]`, RXD `ui_in[7]`, RTS `uo_out[1]`, CTS `ui_in[2]` | none | supported (simulation) |
 | RS-232 device | UART | as above | RS-232 level transceiver | feasible (untested) |
 | RS-485 / DMX512 bus | UART + driver-enable pin | as above + one spare pad for DE | RS-485 transceiver; program change for DE | feasible (no program) |
 | SPI peripheral (flash, ADC, display) | SPI controller, modes 0–3, 1–16-bit words, MSB/LSB first | SCK `uio[3]`, CS `uio[0]`, MOSI `uio[1]`, MISO `uio[2]` | none | supported (simulation) |
