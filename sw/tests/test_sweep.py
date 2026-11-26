@@ -21,7 +21,8 @@ PROGS = [("uart_tx", {"ENG": 0}), ("uart_rx", {"ENG": 0}), ("spi_ctrl", {"ENG": 
          ("i2c_ctrl", {"ENG": 0}), ("i2c_tgt", {"ENG": 0}), ("ws2812", {"ENG": 0}),
          ("manchester", {"ENG_TX": 0, "ENG_RX": 1}), ("manchester", {"ENG_TX": 1, "ENG_RX": 0}),
          ("manchester", {"ENG_TX": 0, "ENG_RX": 1, "CVCHK": 0}),
-         ("can", {"ENG_TX": 0, "ENG_RX": 1}), ("can", {"ENG_TX": 1, "ENG_RX": 0})]
+         ("can", {"ENG_TX": 0, "ENG_RX": 1}), ("can", {"ENG_TX": 1, "ENG_RX": 0}),
+         ("meter", {"ENG": 0}), ("meter", {"ENG": 0, "EXT": 1}), ("freq", {"ENG": 0, "GATE": 2000})]
 
 
 def never(img, a):
