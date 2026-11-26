@@ -18,7 +18,7 @@ stimulus:                        # at = clk after RUN, or after an event
 expect:
   - {stream: {e: 1}, data: [0x123, 0x08], within: 32000}
   - {pad: uo_out[0], uart: {baud: 1000000, tol: 0.02}, data: [0x55]}
-  - {no: ovr}                    # no OVR / LATE / 0x8C notice
+  - {clean: [ovr, late, trap]}   # (not `no:`: YAML reads it as false)
 timeout: 100000                  # clk; hit = FAIL
 ```
 `partner` = a model in sw/tests/models.py (ISS), its cocotb twin (RTL), or a documented Pmod/PIO action (board). Report: one line per expect (measured vs. tolerance), then `PASS`/`FAIL` and exit code.
