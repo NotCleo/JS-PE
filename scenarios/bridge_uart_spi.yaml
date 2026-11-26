@@ -1,0 +1,15 @@
+# On-chip bridge, no host in the data path: UART RX (E1) -> ring (MEMMAP BR_RING) -> SPI controller (E0), mode 0.
+# 1 Mbaud in (sender 2 % slow), SPI BIT 8 out. Board: UART source on ui_in[7]; SPI target on the uio Pmod.
+name: bridge_uart_spi
+clk_hz: 50000000
+backends: [iss, board]
+programs:
+  - {file: bridge_uart_spi.s, engines: [0, 1], D: {UBIT: 50, BIT: 8}}
+gpio: {rp: ["ui_in[7]"]}
+stimulus:
+  - {at: 50, partner: {model: uart, pin: "ui_in[7]", bit: 51, bytes: [0x00, 0x01, 0x7F, 0x80, 0xA5, 0x5A, 0xFF, 0x1B, 0xC3, 0x3C]}}
+expect:
+  - {spi: {sck: "uio[3]", cs: "uio[0]", mosi: "uio[1]", mode: 0, bits: 8}, data: [0x00, 0x01, 0x7F, 0x80, 0xA5, 0x5A, 0xFF, 0x1B, 0xC3, 0x3C]}
+  - {events: {e: 1}, data: []}
+  - {clean: [ovr, late, trap]}
+timeout: 20000

@@ -1,0 +1,29 @@
+# CAN + UART at once, all four engines from one image (D131): can.s TX E0 / RX E1 on uio[4] (od, wired-AND bus),
+# uart_tx E2 on uo_out[0], uart_rx E3 on ui_in[7]. 500 kbit/s CAN (BIT 100) against a CAN node model, 1 Mbaud UART
+# both ways (sender 2 % slow). The chip's frame, the node's frame and 16 bytes each way overlap in time.
+# Board: CAN bench bus (one pull-up, INTERFACING) with a second node on the Pmod; UART source on ui_in[7].
+name: can_uart
+clk_hz: 50000000
+backends: [iss, board]
+programs:
+  - {file: can.s, engines: [0, 1]}
+  - {file: uart_tx.s, engines: [2], D: {ENG: 2}}
+  - {file: uart_rx.s, engines: [3], D: {ENG: 3}}
+lfsr_share: [[0, 1]]
+gpio: {rp: ["ui_in[7]"], pmod: ["uio[4]:od"]}
+stimulus:
+  - {at: 0, partner: {model: can_node, id: node, pin: "uio[4]:od", bit: 100, delay: 16237, frame: [0x0F8, [255, 255, 255, 255, 255, 255, 255, 255]]}}
+  - {at: 1200, send: {e: 0, can: [0x123, [0x00, 0xFF, 0xA5, 0x5A, 0x01, 0x80, 0x7E, 0x3C]]}}
+  - {at: 1200, send: {e: 2, data: [0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]}}
+  - {at: 1230, partner: {model: uart, pin: "ui_in[7]", bit: 51, bytes: [0xC0, 0xFF, 0xEE, 0x00, 0x1B, 0x55, 0xAA, 0x5A, 0xA5, 0x0F, 0xF0, 0x3C, 0xC3, 0x81, 0x7E, 0x99]}}
+expect:
+  - {partner: node, frames: [[0x123, [0x00, 0xFF, 0xA5, 0x5A, 0x01, 0x80, 0x7E, 0x3C]], [0x0F8, [255, 255, 255, 255, 255, 255, 255, 255]]], acked: true}
+  - {events: {e: 0}, data: [1]}                      # TX SENT
+  - stream: {e: 1}                                    # RX: ID10..8, ID7..0, ID0 RTR DLC, data; byte 0 bits 7:3 undefined
+    mask: {0: 7, 11: 7}
+    data: [1, 0x23, 0x88, 0x00, 0xFF, 0xA5, 0x5A, 0x01, 0x80, 0x7E, 0x3C, 0, 0xF8, 0x08, 255, 255, 255, 255, 255, 255, 255, 255]
+  - {events: {e: 1}, data: [1, 1]}                   # RX OK twice (own frame, node frame)
+  - {pad: "uo_out[0]", uart: {bit: 50, tol: 0.02}, data: [0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]}
+  - {stream: {e: 3}, data: [0xC0, 0xFF, 0xEE, 0x00, 0x1B, 0x55, 0xAA, 0x5A, 0xA5, 0x0F, 0xF0, 0x3C, 0xC3, 0x81, 0x7E, 0x99]}
+  - {clean: [ovr, late, trap]}
+timeout: 40000

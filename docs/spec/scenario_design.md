@@ -42,3 +42,6 @@ TT firmware (tt-micropython-firmware @15ba5ce): modes `RPMode.SAFE`, `ASIC_RP_CO
 7. Stimulus and expects; then `STOP`, `RST`, every `gpio.rp` pin back to `Pin.IN`.
 
 While engines run: `RDMEM` ≤ 4 / 11 words at B = 16 / 8 (D088); one reply op at a time, a new one replaces the old (D085); poll `RDREG ESTe` only between stream reads.
+
+## Vocabulary (step 3, host/scenario.py)
+Pins: `:od` (pulled-up wired AND), `:shared` (half duplex the protocol arbitrates, USB). Partners: `uart`, `can_node` (verdict: frames, acked), `square` (board: PWM), `wire` (jumper from a chip pad), `usb_host` (needs `link: wire`: real host link, RP2350 stand-in writes the buffer); `idle` = levels before start. Stimulus: `send` (`data` or `can`), `fault`, `campaign` (host/fault.py seed → fault + send per character), `partner`. Expects: `stream`/`events`/`fifo` (`mask`, `prefix`, `within`, `from_campaign` template per fault type), `decode` (host decoder `module.fn`, `field`, `skip`, `tol`), `pad` + `uart`, `spi`, `partner`, `clean` (ovr, late, trap, undef, notes). Backends: `make scenario S=… [BACKEND=rtl|board]`; board = JSON + `.bin` for host/scenario_board.py (send/fault/PWM, stream-type expects; the rest SKIP or operator steps).

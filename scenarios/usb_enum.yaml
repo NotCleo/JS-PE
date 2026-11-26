@@ -1,0 +1,19 @@
+# USB low-speed enumeration (programs/usb_ls_design.md, INTERFACING USB Pmod): usb_ls (E0 TX, E1 RX, 512-word build)
+# against a USB host model; the RP2350 stand-in answers SETUPs over the real host link (B = 16, WRMEM only).
+# Time scaled as in sw/tests/test_usb_enum.py (bus reset 1 500 clk). One SET_ADDRESS DATA packet is corrupted:
+# the chip reports evt CRC once and the host retries. Board: USB Pmod on uio[4..6], a PC as the host.
+name: usb_enum
+clk_hz: 48000000
+backends: [iss, board]
+link: wire
+programs:
+  - {file: usb_ls.s, engines: [0, 1], D: {MEMWORDS: 512}}
+lfsr_share: [[0, 1]]
+gpio: {pmod: ["uio[4]:shared", "uio[5]:shared"]}
+stimulus:
+  - {at: 0, partner: {model: usb_host, pins: ["uio[4]:shared", "uio[5]:shared"], idle: [0, 1], full: false, corrupt_req: 5}}
+expect:
+  - {partner: usb_host, result: [dev0, dev], addr: 7}
+  - {clean: [ovr, trap, notes]}     # not late: E1 counts 14 in the 512 build, also in test_usb_enum (own=2), unchecked there
+timeout: 3000000
+settle: 500

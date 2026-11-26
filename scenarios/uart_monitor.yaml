@@ -1,0 +1,19 @@
+# Passive monitor (programs/monitor_design.md): uart_mon TS=0 watches both directions of a 1 Mbaud link it never
+# drives (no pads enabled). Line A on ui_in[7] (sender 2 % fast), line B on ui_in[6] (2 % slow), overlapping.
+# Board: the monitored device pair sits on the Pmod; the RP2350 only listens. host/monitor.py decodes the streams.
+name: uart_monitor
+clk_hz: 50000000
+backends: [iss, board]
+programs:
+  - {file: uart_mon.s, engines: [0, 1], D: {BAUD: 1000000, TS: 0}}
+gpio: {pmod: ["ui_in[7]", "ui_in[6]"]}
+stimulus:
+  - {at: 100, partner: {model: uart, id: line_a, pin: "ui_in[7]", bit: 49, bytes: [0x41, 0x54, 0x0D, 0x0A]}}
+  - {at: 700, partner: {model: uart, id: line_b, pin: "ui_in[6]", bit: 51, bytes: [0x4F, 0x4B, 0x0D, 0x0A, 0x00, 0xFF]}}
+expect:
+  - {decode: {e: 0, fn: monitor.uart, field: 1}, data: [0x41, 0x54, 0x0D, 0x0A], exact: true}
+  - {decode: {e: 1, fn: monitor.uart, field: 1}, data: [0x4F, 0x4B, 0x0D, 0x0A, 0x00, 0xFF], exact: true}
+  - {events: {e: 0}, data: []}
+  - {events: {e: 1}, data: []}
+  - {clean: [ovr, late, trap]}
+timeout: 20000

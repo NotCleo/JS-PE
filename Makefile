@@ -8,7 +8,7 @@ T ?=
 MEM ?=
 MEMDEF = $(if $(filter flop,$(MEM)),-DJSPE_MEM_FLOP)
 
-.PHONY: test unit lint area swtest swtest-all gl gl-fetch gl-local gl-all formal mutate clean
+.PHONY: test unit lint area swtest swtest-all gl gl-fetch gl-local gl-all formal mutate clean scenario
 test:
 	@$(MAKE) -s -C test JSPE_MEM=$(MEM) > test/last.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last.log $(NOW)
 
@@ -62,6 +62,13 @@ formal:
 
 mutate:
 	@mkdir -p build/formal; PATH=$(OSS):$$PATH python3 scripts/mutate.py $(B)
+
+scenario:
+ifeq ($(BACKEND),rtl)
+	@$(MAKE) -s -C test JSPE_MEM=$(MEM) COCOTB_TEST_MODULES=test_scenario SCENARIO=$(abspath $(S)) > test/last.log 2>&1; python3 scripts/test_summary.py test/results.xml test/last.log $(NOW)
+else
+	@python3 host/scenario.py $(S) --backend $(or $(BACKEND),iss) --out build
+endif
 
 swtest:
 	@JSPE_LINT=error PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q -p xdist.plugin -n auto -m "not slow" sw/tests 2>&1 | tail -15

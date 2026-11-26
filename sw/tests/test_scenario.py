@@ -244,3 +244,62 @@ def test_lfsr_tapcfg_step_bit(tmp_path):
 
 def test_reject_unknown_key(tmp_path):
     rejects(write(tmp_path, UART_TX % "[]" + "bogus: 1\n"), "unknown keys")
+
+
+# ---------------- scenarios/ (step 3): all PASS on the ISS; mutated expects must FAIL ----------------
+SCN_DIR = os.path.join(os.path.dirname(S.PROG), "..", "..", "scenarios")
+SCNS = sorted(f for f in os.listdir(SCN_DIR) if f.endswith(".yaml"))
+
+
+def test_scenario_set():
+    assert len(SCNS) >= 6 and {"bridge_uart_spi.yaml", "fault_campaign_uart.yaml", "uart_monitor.yaml", "meter.yaml",
+                                "usb_enum.yaml", "can_uart.yaml"} <= set(SCNS)
+
+
+@pytest.mark.parametrize("name", SCNS)
+def test_scenario_passes_on_iss(name):
+    ok, text = S.run(os.path.join(SCN_DIR, name))
+    assert ok, text
+
+
+def mutated(tmp_path, name, old, new):
+    t = open(os.path.join(SCN_DIR, name)).read()
+    assert old in t
+    p = tmp_path / name
+    p.write_text(t.replace(old, new, 1))
+    return S.run(str(p))
+
+
+def test_spi_expect_catches_wrong_byte(tmp_path):
+    ok, text = mutated(tmp_path, "bridge_uart_spi.yaml", "0xC3, 0x3C]}\n  - {events", "0xC3, 0x3D]}\n  - {events")
+    assert not ok and "FAIL spi" in text
+
+
+def test_campaign_seed_matters(tmp_path):
+    ok, text = mutated(tmp_path, "fault_campaign_uart.yaml", "from_campaign: {0: [ch], 1: [ch, 0x102]",
+                       "from_campaign: {0: [ch], 1: [ch, 0x101]")
+    assert not ok and "FAIL fifo" in text
+
+
+def test_decoder_expect_tolerance(tmp_path):
+    ok, text = mutated(tmp_path, "meter.yaml", "data: [500, 300,", "data: [503, 300,")
+    assert not ok and "FAIL decode measure.meter" in text
+
+
+def test_can_partner_verdict(tmp_path):
+    ok, text = mutated(tmp_path, "can_uart.yaml", "frames: [[0x123,", "frames: [[0x124,")
+    assert not ok and "FAIL can node" in text
+
+
+def test_board_export(tmp_path):
+    scn = S.load(os.path.join(SCN_DIR, "fault_campaign_uart.yaml"))
+    img, plan = S.check(scn)
+    j, b = S.export_board(scn, img, plan, str(tmp_path))
+    import json
+    d = json.load(open(j))
+    assert open(b, "rb").read() == img.bin_bytes()
+    assert d["rp_ui"] == [3] and d["pmod"] == ["ui_in[7]"] and d["clk_hz"] == 50000000
+    faults = [s["fault"] for s in d["steps"] if "fault" in s]
+    assert len(faults) == 6 and all(a == S.MAP["FAULT_W"] for a, _ in faults)
+    assert len(d["expect"][0]["data"]) == 30 and d["expect"][1] == {"skip": d["expect"][1]["skip"]}
+    assert any("operator" in s for s in d["steps"])  # the jumper partner is an operator step on the board

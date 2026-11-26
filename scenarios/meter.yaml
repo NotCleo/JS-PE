@@ -1,0 +1,15 @@
+# Measurement (programs/measure_design.md): meter.s times every low and high phase on ui_in[0], +-1 clk.
+# Partner: 62.5 kHz square wave, high 300 clk / low 500 clk (board: RP2350 PWM on the ui_in[0] GPIO).
+# host/measure.py meter() -> (level, clk, flag); the first record is dropped by the decoder.
+name: meter
+clk_hz: 50000000
+backends: [iss, board]
+programs:
+  - {file: meter.s, engines: [0], D: {MPIN: 0}}
+gpio: {rp: ["ui_in[0]"]}
+stimulus:
+  - {at: 100, partner: {model: square, pin: "ui_in[0]", high: 300, low: 500, idle: [0]}}
+expect:
+  - {decode: {e: 0, fn: measure.meter, field: 1, skip: 1}, data: [500, 300, 500, 300, 500, 300, 500, 300], tol: 1}
+  - {clean: [ovr, late, trap]}
+timeout: 12000

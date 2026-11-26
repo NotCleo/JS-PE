@@ -1,0 +1,18 @@
+# Quick start: uart_tx (E0) sends what the host writes; uart_rx (E1) streams what the partner sends. 1 Mbaud 8N1.
+# Board: ui_in[7] = RP2350 UART TX (or a USB-UART Pmod: move it to gpio.pmod); uo_out[0] = TXD to any receiver.
+name: uart_echo
+clk_hz: 50000000
+backends: [iss, rtl, board]
+programs:
+  - {file: uart_tx.s, engines: [0]}
+  - {file: uart_rx.s, engines: [1], D: {ORG: 64}}
+gpio: {rp: ["ui_in[7]"]}
+stimulus:
+  - {at: 100, send: {e: 0, data: [0x48, 0x69, 0x21, 0x1B, 0x00, 0xFF]}}
+  - {at: 200, partner: {model: uart, pin: "ui_in[7]", bit: 50, bytes: [0x43, 0x6C, 0x65, 0x6F, 0x1B]}}
+expect:
+  - {pad: "uo_out[0]", uart: {bit: 50, tol: 0.02}, data: [0x48, 0x69, 0x21, 0x1B, 0x00, 0xFF]}
+  - {stream: {e: 1}, data: [0x43, 0x6C, 0x65, 0x6F, 0x1B]}
+  - {clean: [ovr, late, trap, notes]}
+timeout: 40000
+settle: 1000

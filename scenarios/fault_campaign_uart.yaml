@@ -1,0 +1,22 @@
+# Seeded fault campaign (EI1, programs/fault_design.md): uart_tx FAULTS=1 (E0) -> jumper -> uart_rx (E1), 8E1 at 1 Mbaud.
+# host/fault.py campaign(seed 2026): 6 of 24 characters get a parity, stop-bit-0 or break fault (same list on the
+# board). Every fault must show up exactly once at its character: parity -> evt 2, stop 0 -> evt 1, break -> 0x00 + evt 1.
+# Board: Pmod jumper uo_out[0] -> ui_in[7].
+name: fault_campaign_uart
+clk_hz: 50000000
+backends: [iss, board]
+programs:
+  - {file: uart_tx.s, engines: [0], D: {FAULTS: 1, PARITY: 1}}
+  - {file: uart_rx.s, engines: [1], D: {ORG: 64, PARITY: 1}}
+gpio: {pmod: ["ui_in[7]"]}
+stimulus:
+  - {at: 0, partner: {model: wire, from: "uo_out[0]", pin: "ui_in[7]"}}
+  - at: 30
+    campaign: {e: 0, prog: uart_tx, seed: 2026, faults: 6, every: 2000, arg_range: {3: [12, 40]},
+               data: [0x0D, 0x1A, 0x27, 0x34, 0x41, 0x4E, 0x5B, 0x68, 0x75, 0x82, 0x8F, 0x9C,
+                      0xA9, 0xB6, 0xC3, 0xD0, 0xDD, 0xEA, 0xF7, 0x04, 0x11, 0x1E, 0x2B, 0x38]}
+expect:
+  - {fifo: {e: 1}, from_campaign: {0: [ch], 1: [ch, 0x102], 2: [ch, 0x101], 3: [0x00, 0x101]}}
+  - {clean: [ovr, late, trap]}
+timeout: 60000
+settle: 2500
