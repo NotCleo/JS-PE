@@ -1267,3 +1267,230 @@ class SwdHost:
         if k < 0 or self.drv == "end":
             return 1, None
         return (0 if t - (self.t0 + k * self.T) < self.T / 2 else 1), self.drv
+
+
+# ---------------- PS/2 ----------------
+def ps2_frame(byte, bad_parity=False, start=0, stop=1):
+    # 11 bits on the wire: start, 8 data LSB first, odd parity, stop
+    p = (bin(byte & 0xFF).count("1") & 1) ^ 1
+    return [start] + [byte >> i & 1 for i in range(8)] + [p ^ int(bool(bad_parity)), stop]
+
+
+def ps2_check(bits):
+    # 11 bits -> (byte, start ok, parity ok, stop ok)
+    v = sum(b << i for i, b in enumerate(bits[1:9]))
+    return v, bits[0] == 0, (sum(bits[1:10]) & 1) == 1, bits[10] == 1
+
+
+class _Ps2Proc:
+    # per-clock coroutine on an open-drain bus: step(t, clk, dat) with the bus levels at clock t -> (clk_lo, dat_lo)
+    def __init__(self):
+        self.clk_lo = self.dat_lo = False
+        self.t, self.clk, self.dat = 0, 1, 1
+        self.g = self._run()
+        next(self.g)
+
+    def step(self, t, clk, dat):
+        self.t, self.clk, self.dat = t, clk, dat
+        self.g.send(None)
+        return self.clk_lo, self.dat_lo
+
+    def wait(self, n):
+        end = self.t + n
+        while self.t < end:
+            yield
+
+    def until(self, cond, limit=None):
+        # True as soon as cond() holds, False after limit clk
+        end = None if limit is None else self.t + limit
+        while not cond():
+            if end is not None and self.t >= end:
+                return False
+            yield
+        return True
+
+
+class Ps2HostModel(_Ps2Proc):
+    # PS/2 host. A passive decoder takes device frames at CLK falls while the model leaves CLK alone: frames =
+    # [(byte, start ok, parity ok, stop ok)], aborted = partial frames cut by an inhibit or a pause > 4 half,
+    # phases = CLK low/high lengths inside frames, viol = DATA change while CLK low inside a frame or less than
+    # `setup` clk before a fall. ops in order: ("wait", n); ("hold", n) CLK low n clk; ("inhibit", k, delay, n): CLK
+    # low n clk from `delay` after the k-th fall of a device frame; ("send", byte[, opts]) CLK low `inh` clk, DATA
+    # low, CLK released, each bit `hd` clk after a device fall, stop released, ACK read at the 11th fall (opts:
+    # bad_parity, stop0, hd, cut = bits sent before the host takes CLK low again for `inh` and gives up). results: per send the DATA level at the 11th fall (0 = ACK), None if it never came.
+    def __init__(self, ops, half, inh=None, setup=None):
+        self.ops, self.half = list(ops), half
+        self.inh = 3 * half if inh is None else inh
+        self.setup = half // 4 if setup is None else setup
+        self.frames, self.aborted, self.viol, self.results, self.phases = [], [], [], [], []
+        self.bits, self.busy, self.done, self.lowok = [], False, False, False
+        self.pc, self.pd, self.tc, self.td = 1, 1, 0, 0
+        super().__init__()
+
+    def step(self, t, clk, dat):
+        passive = not self.busy and not self.clk_lo
+        if dat != self.pd:
+            if passive and clk == 0 and self.bits:
+                self.viol.append(("DATA changed while CLK low", t))
+            self.td, self.pd = t, dat
+        if clk != self.pc:
+            if passive and (self.bits if clk == 0 else self.lowok):
+                self.phases.append(("low" if clk else "high", t - self.tc))
+            self.lowok = clk == 0 and passive
+            if clk == 0 and passive:
+                if t - self.td < self.setup:
+                    self.viol.append(("DATA setup %d before the fall" % (t - self.td), t))
+                self.bits.append(dat)
+                if len(self.bits) == 11:
+                    self.frames.append(ps2_check(self.bits))
+                    self.bits = []
+            self.tc, self.pc = t, clk
+        if self.bits and passive and t - self.tc > 4 * self.half:
+            self.aborted.append(self.bits)
+            self.bits = []
+        return super().step(t, clk, dat)
+
+    def _lo(self):
+        if self.bits:
+            self.aborted.append(self.bits)
+            self.bits = []
+        self.clk_lo = True
+
+    def _run(self):
+        yield
+        for op in self.ops:
+            if op[0] == "wait":
+                yield from self.wait(op[1])
+            elif op[0] == "hold":
+                self._lo()
+                yield from self.wait(op[1])
+                self.clk_lo = False
+            elif op[0] == "inhibit":
+                k, delay, n = op[1:]
+                yield from self.until(lambda: len(self.bits) >= k)
+                yield from self.wait(delay)
+                self._lo()
+                yield from self.wait(n)
+                self.clk_lo = False
+            elif op[0] == "send":
+                r = yield from self._send(op[1], op[2] if len(op) > 2 else {})
+                self.results.append(r)
+        self.done = True
+        while True:
+            yield
+
+    def _send(self, byte, o):
+        self.busy = True
+        self._lo()
+        yield from self.wait(self.inh)
+        self.dat_lo = True
+        yield from self.wait(2)
+        self.clk_lo = False
+        bits = ps2_frame(byte, o.get("bad_parity"), stop=0 if o.get("stop0") else 1)[1:]
+        ack = None
+        for i, b in enumerate(bits):
+            if o.get("cut") == i:
+                self.clk_lo = True
+                yield from self.wait(self.inh)
+                self.clk_lo = self.dat_lo = self.busy = False
+                return None
+            yield from self.until(lambda: self.clk == 1, 4 * self.half)
+            if not (yield from self.until(lambda: self.clk == 0, 40 * self.half)):
+                break
+            yield from self.wait(o.get("hd", 4))
+            self.dat_lo = b == 0
+        else:
+            yield from self.until(lambda: self.clk == 1, 4 * self.half)
+            if (yield from self.until(lambda: self.clk == 0, 4 * self.half)):
+                ack = None if o.get("stop0") else self.dat
+                self.dat_lo = False
+                yield from self.until(lambda: self.clk == 1 and self.dat == 1, 4 * self.half)
+        self.dat_lo = False
+        self.busy = False
+        return ack
+
+
+class Ps2DeviceModel(_Ps2Proc):
+    # PS/2 device: CLK half period `half`, DATA set in the middle of CLK high; before every bit after the start bit
+    # CLK is read there (low = host inhibit: frame aborted, byte kept). A frame starts after `idle` clk of idle bus.
+    # Request-to-send (CLK high, DATA low): 11 pulses `half` later, DATA sampled in the middle of CLK high, ACK =
+    # DATA low from the middle of pulse 10 high to the middle of pulse 11 high. tx = [(byte, opts)]: bad_parity,
+    # start1, stop0, cut = bits sent before the clock stops. rx: noclock (no pulses), nack (pulse 11, no ACK).
+    # Results: got = [(byte, parity ok, stop ok)], sent, aborts, inh = host CLK-low lengths, viol = host DATA change
+    # while CLK high in a receive.
+    def __init__(self, half, tx=(), idle=None, rx=None):
+        self.half, self.tx = half, list(tx)
+        self.idle = half if idle is None else idle
+        self.rxo = dict(rx or {})
+        self.got, self.sent, self.aborts, self.inh, self.viol = [], [], 0, [], []
+        self.rxing, self.pd, self.pc, self.tl = False, 1, 1, None
+        super().__init__()
+
+    def step(self, t, clk, dat):
+        if self.rxing and clk == 1 and dat != self.pd and not self.dat_lo:
+            self.viol.append(("host DATA changed while CLK high", t))
+        if clk != self.pc and not self.clk_lo:
+            if clk == 0:
+                self.tl = t
+            elif self.tl is not None:
+                self.inh.append(t - self.tl)
+                self.tl = None
+        self.pd, self.pc = dat, clk
+        return super().step(t, clk, dat)
+
+    def _run(self):
+        while True:
+            yield
+            if self.clk == 0:
+                yield from self.until(lambda: self.clk == 1)
+            elif self.dat == 0:
+                yield from self._rx()
+            elif self.tx:
+                if not (yield from self.until(lambda: self.clk == 0 or self.dat == 0, self.idle)):
+                    yield from self._tx()
+
+    def _tx(self):
+        byte, o = self.tx[0]
+        bits = ps2_frame(byte, o.get("bad_parity"), 1 if o.get("start1") else 0, 0 if o.get("stop0") else 1)
+        q = self.half // 2
+        for i, b in enumerate(bits):
+            if i and self.clk == 0:
+                self.dat_lo = False
+                self.aborts += 1
+                return
+            if o.get("cut") == i:
+                self.dat_lo = False
+                self.tx.pop(0)
+                return
+            self.dat_lo = b == 0
+            yield from self.wait(q)
+            self.clk_lo = True
+            yield from self.wait(self.half)
+            self.clk_lo = False
+            yield from self.wait(self.half - q)
+        self.dat_lo = False
+        self.tx.pop(0)
+        self.sent.append(byte)
+
+    def _rx(self):
+        if self.rxo.get("noclock"):
+            yield from self.until(lambda: self.dat == 1)
+            return
+        yield from self.wait(self.half)
+        q, bits = self.half // 2, []
+        self.rxing = True
+        for k in range(11):
+            self.clk_lo = True
+            yield from self.wait(self.half)
+            self.clk_lo = False
+            yield from self.wait(q)
+            if k < 10:
+                bits.append(self.dat)
+            if k == 9 and bits[9] == 1 and not self.rxo.get("nack"):
+                self.dat_lo = True
+            if k == 10:
+                self.rxing = self.dat_lo = False
+            yield from self.wait(self.half - q)
+        self.rxing = False
+        v, _, pok, sok = ps2_check([0] + bits)
+        self.got.append((v, pok, sok))

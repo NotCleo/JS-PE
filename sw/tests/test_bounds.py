@@ -74,10 +74,16 @@ def sc_swd_host(img, ph, pp, eng):
     return scenario(img, ph, pp)
 
 
+def sc_ps2_dev(img, ph, pp, eng):
+    from test_ps2 import dev_scenario
+    return dev_scenario(img, ph, pp)
+
+
 CASES = [("uart_rx", {"BIT": 15}, sc_uart_rx, "ENG"), ("uart_tx", {"BIT": 11}, sc_uart_tx, "ENG"),
          ("spi_tgt", {}, sc_spi_tgt, "ENG"), ("ws2812", {}, sc_ws2812, "ENG"),
          ("manchester", {"BIT": 50}, sc_manchester(50), None), ("manchester", {"BIT": 22}, sc_manchester(22), None),
-         ("jtag_ctrl", {}, sc_jtag_ctrl, "ENG"), ("swd_host", {}, sc_swd_host, "ENG")]
+         ("jtag_ctrl", {}, sc_jtag_ctrl, "ENG"), ("swd_host", {}, sc_swd_host, "ENG"),
+         ("ps2_dev", {"HALF": 40, "IDLE": 40}, sc_ps2_dev, "ENG")]
 
 
 @pytest.mark.parametrize("name,defs,sc,engdef", CASES, ids=[c[0] + str(c[1].get("BIT", "")) for c in CASES])
