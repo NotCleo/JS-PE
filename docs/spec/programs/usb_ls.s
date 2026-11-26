@@ -9,7 +9,7 @@
 ;   EV_INACK when the host ACKed the armed buffer. Bus reset: RP2350 reads uio4/uio5 on its GPIOs (SE0 >= 2.5 us).
 ; LIMITS: no stuff-error check (CRC / key compare catch it); a token key equal to 0, 0xFFFF or 0xB001 aliases.
 ; builds (the option defaults follow MEMWORDS; any -D overrides one):
-;   512 words (SRAM, default, D204)                = -D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1 -> 145 words (buffer at USB_BUF >= 256: 3 two-word li)
+;   512 words (SRAM, default, D204)                = -D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1 -> 147 words (buffer at USB_BUF >= 256: 3 two-word li; IN decided first, D228)
 ;   128 words (flop fallback): -D MEMWORDS=128 --mem 128 = -D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0 -> 128 words
 ;   128: no PID check, crossover SE0 skew <= 8 clk (167 ns), D+ read back; 512: all on, skew <= 10 clk (210 ns).
 
@@ -208,26 +208,33 @@ eop:                                    ; EOPCHK: no flag may change before the 
 .endif
         cmp   R2, #0x2D
         jc    edat
+.if EOPCHK > 1                          ; long SE0 confirmation: decide IN first, its NAK/DATA races the SE0 -> J
+        cmp   R1, #0x69
+        jnz   notin
+        li    S, #KEY0
+        li    R2, #0
+.else
         cmp   S, #0xD2                  ; ACK: S = last byte (R1 may miss a 1-byte PID; token b2 & 7 = 0 for EP0/1)
         li    S, #KEY0
         jz    eack
         li    R2, #0
         cmp   R1, #0x69
-        jz    ein
-.if PIDCHK
-        cmp   R1, #0x2D
-        jz    eout
-        cmp   R1, #0xE1
-        jnz   hunt                      ; corrupted PID, keep-alive
+        jnz   noin                      ; IN falls through: its handshake decision races the EOP's SE0 -> J
 .endif
-eout:   ld    R2, [S]                   ; SETUP / OUT (PIDCHK 0: also any other PID and keep-alive; no match)
-        cmp   R2, R0
-        li    R2, #0
-        jnz   hunt
-        st    R2, [S+1]!                ; disarm BUFKEY
-        mov   R2, R1
-        jmp   hunt
-
+ein:    ld    R1, [S+1]!                ; BUFKEY
+        cmp   R1, R0
+        jz    indat
+.if OWNCHK
+        ld    R1, [S+1]!                ; KEY1
+        cmp   R1, R0
+        jz    inak
+        add   S, #-2                    ; KEY0 (S = KEY1 here; 1 word, li S is 2 words when KEY0 > 255)
+        ld    R1, [S]
+        cmp   R1, R0
+        jnz   tohunt                    ; out of reach of hunt
+.endif
+inak:   @rise p1 : sset #G_NAK
+        jmp   txw
 edat:   push  R2                        ; token PID closes the packet
         li    R2, #0
 .if PIDCHK
@@ -253,20 +260,27 @@ eack:   cmp   R2, #2
         evt   #EV_INACK
 tohunt: jmp   hunt
 
-ein:    ld    R1, [S+1]!                ; BUFKEY
-        cmp   R1, R0
-        jz    indat
-.if OWNCHK
-        ld    R1, [S+1]!                ; KEY1
-        cmp   R1, R0
-        jz    inak
+.if EOPCHK > 1
+notin:  cmp   S, #0xD2                  ; ACK (see above)
         li    S, #KEY0
-        ld    R1, [S]
-        cmp   R1, R0
-        jnz   tohunt                    ; out of reach of hunt
+        jz    eack
+        li    R2, #0
 .endif
-inak:   @rise p1 : sset #G_NAK
-        jmp   txw
+noin:
+.if PIDCHK
+        cmp   R1, #0x2D
+        jz    eout
+        cmp   R1, #0xE1
+        jnz   tohunt                    ; corrupted PID, keep-alive
+.endif
+eout:   ld    R2, [S]                   ; SETUP / OUT (PIDCHK 0: also any other PID and keep-alive; no match)
+        cmp   R2, R0
+        li    R2, #0
+        jnz   tohunt
+        st    R2, [S+1]!                ; disarm BUFKEY
+        mov   R2, R1
+        jmp   hunt
+
 indat:  li    R2, #2
         @rise p1 : sset #G_DAT
         jmp   txw

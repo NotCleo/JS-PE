@@ -37,12 +37,18 @@ def common(host, rp, corrupt_req):
     assert host.dups == 0 and not host.clash and rp.notes == [] and set(rp.ops) == {0x70}
 
 
+def no_late(c):
+    # every handshake guard (@rise p1 : sset) armed before the host's SE0 -> J (D228); ovr: no event missed
+    assert [e.late for e in c.eng] == [0] * 4 and [e.ovr for e in c.eng] == [0] * 4
+
+
 @pytest.mark.parametrize("own", [1, 0, 2])
 def test_usb_enum_address(own):
     # bus reset, GET_DESCRIPTOR(device) at 0, SET_ADDRESS (corrupted once), GET_DESCRIPTOR(device) at 7
     c, host, rp = enumerate_iss(own, full=False, corrupt_req=5)
     assert host.result["dev0"] == DEV_DESC and host.result["dev"] == DEV_DESC
     common(host, rp, 5)
+    no_late(c)
 
 
 @pytest.mark.slow
@@ -54,3 +60,4 @@ def test_usb_enum_keyboard(own):
     assert r["dev0"] == DEV_DESC and r["dev"] == DEV_DESC and r["cfg9"] == CFG_DESC[:9] and r["cfg"] == CFG_DESC
     assert r["report"] == REPORT_DESC and r["report2"] == REPORT_DESC and r["reports"] == REPORTS and rp.configured
     common(host, rp, 9)
+    no_late(c)

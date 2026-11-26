@@ -14,6 +14,6 @@ stimulus:
   - {at: 0, partner: {model: usb_host, pins: ["uio[4]:shared", "uio[5]:shared"], idle: [0, 1], full: false, corrupt_req: 5}}
 expect:
   - {partner: usb_host, result: [dev0, dev], addr: 7}
-  - {clean: [ovr, trap, notes]}     # not late: E1 counts 14 in the 512 build, also in test_usb_enum (own=2), unchecked there
+  - {clean: [ovr, late, trap, notes]}
 timeout: 3000000
 settle: 500

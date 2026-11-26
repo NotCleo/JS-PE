@@ -47,7 +47,7 @@ Right form, POLY 0xA001, LFSR_HI 0, set in `.init`; both engines set `lfen`. Hal
 | Buffer + keys | 11 | 10 |
 | Total | 109 | **127 / 128**; `-D OWNCHK=0`: **120** |
 | Step 6: inline byte loop, `ecrc` before `hunt` | | −2 → 125 (`EOPCHK` 0, `TXJK` 0) |
-| Builds (§12) | | 128 words: **128** (`EOPCHK` 1 +3); 512 words: **145** (`PIDCHK` +8, `EOPCHK` 3 +7, `TXJK` +2, buffer at `USB_BUF` ≥ 256 +3) |
+| Builds (§12) | | 128 words: **128** (`EOPCHK` 1 +3); 512 words: **147** (`PIDCHK` +8, `EOPCHK` 3 +7 (+2 IN decided first, D228), `TXJK` +2, buffer at `USB_BUF` ≥ 256 +3) |
 
 Over the estimate: per-bit TX loop (21, the J/K branch + CRC splice), EOP dispatch (keys, disarm). Cuts left: OWNCHK 0 (−7; it also NAKs INs for other LS devices behind the same hub, which collides there). Options in 128 words: `-D OWNCHK=0 -D PIDCHK=1 -D EOPCHK=0` = 126 (PID checks, no SE0 confirm); `-D TXJK=1 -D EOPCHK=0` = 127. The 512-word build is chosen with `-D MEMWORDS=512 --mem 512` (§12).
 
@@ -80,7 +80,7 @@ All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound v
 ## 12. Builds and slow edges (step 6)
 `MEMWORDS` sets the defaults; each is overridable with `-D`. Default sets: 512 words (default since D204, the shipped SRAM build) = `-D OWNCHK=1 -D PIDCHK=1 -D EOPCHK=3 -D TXJK=1` (142 words, all checks on); 128 words (flop fallback, `-D MEMWORDS=128 --mem 128`) = `-D OWNCHK=1 -D PIDCHK=0 -D EOPCHK=1 -D TXJK=0` (128 words). BUF = `USB_BUF_FLOP` 118 (128 words, one-word `li`) or `USB_BUF` 465 (512 words, MEMMAP.md, D209: `li` is two words, +3; also makes a 512 build fail at `--mem 128`).
 
-| Option | 128 words (128) | 512 words (145) | Words |
+| Option | 128 words (128) | 512 words (147) | Words |
 |---|---|---|---|
 | `OWNCHK` NAK only our address | 1 | 1 | +7 |
 | `PIDCHK` exact PIDs | 0: corrupted PID → RP2350 STALLs (§11 d) | 1 | +8 |
@@ -92,3 +92,10 @@ All within 2–6.5 (detachable cable), ≥ 3.3 bits of margin. Assembler bound v
 - **Measured (ISS, 4 phases, `test_usb_edges.py`).** Fixed skew: 512 words pass SE0 skew ≤ 10 clk (210 ns), SE1 ≤ 12; 128 words SE0 ≤ 8 clk (167 ns), SE1 ≤ 12. Random per-edge delays up to 14 clk (300 ns) with crossover SE0 0–10 clk (512) / 0–8 clk (128) or SE1 at every transition: SETUP, OUT, IN + ACK, keep-alive, NAK all correct. TX: chip's own pads seen 14 clk late, both builds plus `TXJK` 1 in 128 words: packets correct; `TXJK` 0 read-back passes up to 20 clk (417 ns) of delay.
 - **RTL lockstep** (`test/test_usb_ls.py`, `USB_DEFS` selects options): default build and `TXJK=1 EOPCHK=0` pass. It caught two reads of never-written datapath registers (X in RTL, 0 in the ISS): S at the first EOP (ACK test) and C (`xor C, C`); `.init` now writes both (0 words).
 - **128-word limit.** Crossover SE0 of 9–10 clk (188–210 ns) ends a packet (the host retries); the 512-word build covers the full 210 ns. `-D OWNCHK=0 -D EOPCHK=3 -D TXJK=1` = 127 words also covers it, at the cost of OWNCHK (§7).
+
+## 13. IN handshake vs the EOP (D228)
+- **Finding.** The 512-word build counted E1 `late` = 14 per address enumeration (sw/tests/test_usb_enum.py own=2, never asserted): all at `inak: @rise p1 : sset #G_NAK`, an IN to endpoint 0 with no buffer armed (KEY0 match), 3–4 clk after the SE0 → J edge, in every slot phase. The guard fired from its latched flag, so the NAK was correct but its turnaround grew from 2.7 to 2.9 bits (93–94 clk).
+- **Cause.** E1 runs one instruction per 2 clk (slots 0, 1, 0, 1), a load per 4 clk. From the SE0 watcher entry the IN path took 64 clk = the host's SE0: `EOPCHK` 3 (two extra spaced SE0 confirmations, +12 clk), the ACK test ahead of the IN test, a taken `jz ein`, three key loads and `li S, #KEY0` as two words (KEY0 = 472 > 255). The 128-word build (`EOPCHK` 1, one-word `li`) is 12 clk faster and was never late.
+- **Fix (+2 words, 147).** `EOPCHK` > 1: the IN test runs first and falls through into the key checks (ACK, SETUP/OUT and corrupted PIDs need no handshake, their branch moves); the KEY0 fallback re-points S with `add S, #-2` (one word, flags dead there). The 128-word build keeps the old test order (it is full at 128/128); it only gains the fall-through and `add S, #-2`.
+- **Measured (ISS, 4 phases, full enumeration).** `late` = 0 in both builds (now asserted in test_usb_enum and scenarios/usb_enum.yaml). Guard armed before SE0 → J by: 512 words NAK KEY0 1–2 clk, NAK KEY1 11–12, DATA 17–18, ACK 15–20; 128 words NAK KEY0 11–12. NAK turnaround 88–89 clk (2.75–2.8 bits).
+- **Bound for shorter SE0.** The arming time is fixed relative to the SE0 start, so an SE0 shorter than the model's 64 clk (host transmits 1.25–1.5 µs = 60–72 clk; slow edges shorten it, §12) makes the KEY0 NAK fire late by L ≤ 63 − d clk. A late `sset` only delays the handshake (it samples nothing): turnaround ≤ 89 + L. The shortest SE0 that `EOPCHK` 3 accepts is 21 clk, so L ≤ 42 and the turnaround ≤ 131 clk = 4.1 bits, inside the 2–6.5 bit window with ≥ 77 clk to spare. `late` > 0 at such SE0 lengths is expected and harmless; test_usb_edges covers SE0 skews up to 10 clk functionally.
