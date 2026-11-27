@@ -1499,3 +1499,40 @@ class Ps2DeviceModel(_Ps2Proc):
         self.got.append((v, pok, sok))
         if self.on_rx:
             self.tx[:0] = [(x, {}) for x in self.on_rx(v, pok, sok)]
+
+
+# ---------------- 10BASE-T link pulses (802.3 clauses 14, 28) ----------------
+def flp_positions(word):
+    # FLP burst: clock pulses at positions 0, 2, .., 32; data bit Dk at position 2k + 1 when it is 1
+    return sorted([2 * k for k in range(17)] + [2 * k + 1 for k in range(16) if word >> k & 1])
+
+
+def pulses_of(changes):
+    # [(t, level)] -> [(rise time, width)]
+    out, t1 = [], None
+    for t, v in changes:
+        if v and t1 is None:
+            t1 = t
+        elif not v and t1 is not None:
+            out.append((t1, t - t1))
+            t1 = None
+    return out
+
+
+def flp_word(starts, tp):
+    # positions of one burst's pulses (nearest multiple of tp from the first) -> code word, or None if malformed
+    pos = [round((t - starts[0]) / tp) for t in starts]
+    clocks = [p for p in pos if p % 2 == 0]
+    if clocks != list(range(0, 33, 2)) or len(set(pos)) != len(pos) or max(pos) != 32:
+        return None
+    return sum(1 << (p // 2) for p in pos if p % 2)
+
+
+class PulseLine:
+    # comparator output: high for `width` clk from each start time
+    def __init__(self, starts, width=5):
+        self.s, self.w = sorted(starts), width
+
+    def level(self, t):
+        k = bisect.bisect_right(self.s, t) - 1
+        return int(k >= 0 and t < self.s[k] + self.w)

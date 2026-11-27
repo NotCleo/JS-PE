@@ -28,7 +28,9 @@ PROGS = [("uart_tx", {"ENG": 0}), ("uart_rx", {"ENG": 0}), ("spi_ctrl", {"ENG": 
          ("jtag_ctrl", {"ENG": 0}), ("jtag_tap", {"ENG": 0}),
          ("swd_host", {"ENG": 0}), ("swd_dp", {"ENG": 0}), ("swd_dp", {"ENG": 0, "MDROP": 1}),
          ("ps2_dev", {"ENG": 0, "HALF": 40, "IDLE": 40}),
-         ("ps2_host", {"ENG": 0, "TBIT": 10, "TDSU": 1, "TFIRST": 50})]
+         ("ps2_host", {"ENG": 0, "TBIT": 10, "TDSU": 1, "TFIRST": 50}),
+         ("lp_tx", {"ENG": 0, "TP": 100, "PW": 3, "NTICK": 36}),
+         ("lp_rx", {"ENG": 0, "CLK_HZ": 1280000, "PRE": 0, "LOSS": 65000})]
 
 
 def never(img, a):
@@ -128,6 +130,12 @@ def stress(name, img, ph, seed, live):
     if name == "ps2_host":
         from test_ps2 import host_scenario
         return host_scenario(img, ph, r.randrange(4), full=True)
+    if name == "lp_tx":
+        from test_lp import tx_scenario
+        return tx_scenario(img, ph, r.randrange(4), full=True)
+    if name == "lp_rx":
+        from test_lp import rx_scenario
+        return rx_scenario(img, ph, r.randrange(4), full=True)
     if name == "freq":                                 # 3-clk square: rises merge, the evt 2 path
         c = boot(img, ph)
         n, t0, fr = 7000, c.cycle + 20, r.random()
