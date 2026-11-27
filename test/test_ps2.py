@@ -3,7 +3,8 @@
 # PS/2 family (docs/spec/programs/ps2_design.md), RTL == ISS every clock. PS2-R1: ps2_host.s (E0, CLK uio[6], DATA
 # uio[5]) and ps2_dev.s (E1, CLK uio[4], DATA uio[7]) on one open-drain bus (uio[6] = uio[4], uio[5] = uio[7],
 # pull-ups), device CLK half period 100 clk (250 kHz; the programs' timer constants scaled to it). The device runs
-# the host/ps2.py keyboard behind its DevLink; the host sends commands, and inhibits the device in mid-frame.
+# the host/ps2.py keyboard behind its DevLink; the host sends commands, inhibits, and takes the bus from a waiting
+# scan code (DROP).
 
 import os
 import sys
@@ -79,18 +80,19 @@ async def test_ps2_r1_host_to_device(dut):
     assert await command(b, 0xFF, 1) == [ps2.BAT_OK]
     assert await command(b, 0xED, 0) == [] and await command(b, 0x06, 0) == [] and kb.leds == 6
     assert await command(b, 0xF2, 2) == [0xAB, 0x83]
-    # mid-frame inhibit: the host blocks on the data byte of a send; the device starts a scan code; the data byte
-    # arrives after the start bit: the device aborts, takes EE, echoes it, then sends the scan code again
+    # host inhibit (0x01) while the keyboard has a scan code waiting: the device polls; the host's command takes
+    # the bus first: the waiting byte is dropped (DROP), EE is echoed, then the scan code goes out
     k = len(results(b))
-    b.send(0, b"\x02")
+    b.send(0, ps2.h_inhibit())
     await pump(b, 400)
     b.link.queue(kb.key("A"))
-    await until(b, lambda: b.chip.uio_oe >> 7 & 1, "device start bit")
-    b.send(0, b"\xEE")
+    await until(b, lambda: b.link.inflight is not None, "scan code handed to the chip")
+    await pump(b, 20 * HALF)
+    assert len(results(b)) == k
+    b.send(0, ps2.h_send(0xEE))
     await until(b, lambda: len(results(b)) >= k + 3, "echo and scan code")
     assert results(b)[k:] == [("ack",), ("byte", ps2.ECHO, True), ("byte", 0x1C, True)], results(b)[k:]
     await pump(b, 4 * HALF)
-    ev = [x for x in b.stream(1) if isinstance(x, tuple)]
-    assert ev.count(("ev", ps2.DEV_ABORT)) == 1 and b.link.cmds == [0xFF, 0xED, 0x06, 0xF2, 0xEE]
+    assert ("ev", ps2.DEV_DROP) in b.stream(1) and b.link.cmds == [0xFF, 0xED, 0x06, 0xF2, 0xEE]
     assert b.link.sent == [0xFA, 0xAA, 0xFA, 0xFA, 0xFA, 0xAB, 0x83, 0xEE, 0x1C]
     assert b.notes() == [] and b.chip.eng[0].ovr == 0 and b.chip.eng[1].ovr == 0

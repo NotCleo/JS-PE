@@ -1415,7 +1415,7 @@ class Ps2DeviceModel(_Ps2Proc):
     # CLK is read there (low = host inhibit: frame aborted, byte kept). A frame starts after `idle` clk of idle bus.
     # Request-to-send (CLK high, DATA low): 11 pulses `half` later, DATA sampled in the middle of CLK high, ACK =
     # DATA low from the middle of pulse 10 high to the middle of pulse 11 high. tx = [(byte, opts)]: bad_parity,
-    # start1, stop0, cut = bits sent before the clock stops. rx: noclock (no pulses), nack (pulse 11, no ACK).
+    # start1, stop0, cut = bits sent before the clock stops. rx: noclock (no pulses), nack (pulse 11, no ACK), cut = pulses given before the clock stops.
     # Results: got = [(byte, parity ok, stop ok)], sent, aborts, inh = host CLK-low lengths, viol = host DATA change
     # while CLK high in a receive. on_rx(byte, parity ok, stop ok) -> response bytes, sent ahead of the queue.
     def __init__(self, half, tx=(), idle=None, rx=None, on_rx=None):
@@ -1480,6 +1480,9 @@ class Ps2DeviceModel(_Ps2Proc):
         q, bits = self.half // 2, []
         self.rxing = True
         for k in range(11):
+            if self.rxo.get("cut") == k:
+                self.rxing = self.dat_lo = False
+                return
             self.clk_lo = True
             yield from self.wait(self.half)
             self.clk_lo = False

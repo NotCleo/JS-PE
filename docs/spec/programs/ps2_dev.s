@@ -1,16 +1,17 @@
 ; ps2_dev.s - PS/2 device (keyboard / mouse side): frames to the host with the device clock, host inhibit abort,
 ;             request-to-send receive with ACK; scan codes, commands and packets: host/ps2.py (ps2_design.md)
-; words: 67 | clk/bit: 2 HALF (4000 as written: 12.5 kHz; 10-16.7 kHz = HALF 2500-1500) | max: HALF 28 (893 kHz, ISS) | engines: 1
+; words: 70 | clk/bit: 2 HALF (4000 as written: 12.5 kHz; 10-16.7 kHz = HALF 2500-1500) | max: HALF 28 (893 kHz, ISS) | engines: 1
 ; pins: p0 = CLK (uio[6], od; PINS2 = 1: uio[4]), p1 = DATA (uio[5], od, shift input; PINS2 = 1: uio[7]); pull-ups
 ; host: each byte = one frame (start 0, 8 data LSB first, odd parity, stop 1); keep one byte in flight: the chip
-;       answers evt 1 SENT, or evt 2 ABORT (host inhibit before the stop bit: not delivered, send it again).
+;       answers evt 1 SENT, or evt 2 ABORT (host inhibit before the 11th fall: not delivered, send it again).
 ;       Received bytes (host commands) are pushed, preceded by evt 6 DROP if a byte was waiting for the bus (it is
 ;       dropped: the command response goes first) and evt 3 PERR on a parity error (ACK given); evt 4 FERR (stop
-;       bit 0: no ACK, byte dropped, the clock runs on until DATA is released); evt 5 RABORT (host inhibit during
-;       the receive, byte dropped)
+;       bit 0: no ACK, byte dropped, the clock runs on until DATA is released, no limit); evt 5 RABORT (host
+;       inhibit during the receive, byte dropped). A host byte arriving in the ~5 clk between the DROP check and
+;       the push is not dropped: it goes out before the response
 ; timing: timer periodic HALF: tick = CLK edge, tock = middle of the phase. Device -> host: DATA changes at the
-;       tock of CLK high (HALF / 2 from both edges); before every bit after the start bit CLK is read at that tock:
-;       low = inhibit -> abort. A frame starts only after CLK and DATA were high at both ends of IDLE clk (50 us;
+;       tock of CLK high (HALF / 2 from both edges); before every bit CLK is read at that tock, and once more at
+;       the 11th fall: low = inhibit -> abort. A frame starts only after CLK and DATA were high at both ends of IDLE clk (50 us;
 ;       the window opens on the CLK level; a host inhibits >= 100 us, so a look at both ends is enough).
 ;       Host -> device: request-to-send = CLK rises with DATA low (watcher 0 in idle, and a level check on entering
 ;       idle); 11 clock pulses start HALF later, DATA is sampled at the tock of CLK high, ACK driven from the tock
@@ -80,7 +81,8 @@ iw:     @c1   : tset R0                 ; CLK high and a byte to send: the bus m
         wrst
         tsync                           ; tock = middle of CLK high, tick = CLK edge
         .deadline 5
-        @tock : p1 <- 0                 ; start bit
+        @tock : jlo p0, tab             ; CLK low since the idle check: inhibit
+        p1 <- 0                         ; start bit
         @tick : p0 <- 0
         @tick : p0 <- 1
 tbit:   @tock : jlo p0, tab             ; CLK held low by the host: inhibit
@@ -96,7 +98,8 @@ tbit:   @tock : jlo p0, tab             ; CLK held low by the host: inhibit
         @tick : p0 <- 1
         @tock : jlo p0, tab
         p1 <- 1                         ; stop
-        @tick : p0 <- 0
+        @tick : jlo p0, tab             ; inhibit after the last check, before the 11th fall
+        p0 <- 0
         @tick : p0 <- 1
         @htx  : evt #E_SENT
         jmp   idle
@@ -134,10 +137,11 @@ rnd:    jnpar rok
         @htx  : evt #E_PERR
 rok:    @htx  : push S
         jmp   idle
-rfe:    @htx  : evt #E_FERR
-rfl:    @tick : p0 <- 0                 ; clock on until the host releases DATA
+rfe:    @tick : p0 <- 0                 ; clock on until the host releases DATA
         @tick : p0 <- 1
-        @tock : jlo p1, rfl
+        @tock : jlo p0, rab
+        jlo   p1, rfe
+        @htx  : evt #E_FERR
         jmp   idle
 rab:    @htx  : evt #E_RABORT
         jmp   idle

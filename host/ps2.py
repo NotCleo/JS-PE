@@ -251,7 +251,7 @@ def transact(port, cmd, args=(), nresp=0, tries=3):
         r = port.recv()
         if r[0] == "byte" and r[2]:
             out.append(r[1])
-        elif r[0] == "byte" or r == ("ferr",):
+        elif r[0] == "byte" or r in (("ferr",), ("tmo",)):
             port.send(h_send(RESEND))
             if port.recv() != ("ack",):
                 raise IOError("PS/2 resend not acknowledged")

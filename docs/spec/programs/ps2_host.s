@@ -1,24 +1,25 @@
 ; ps2_host.s - PS/2 host: receive device frames, inhibit, request-to-send and send a command byte with ACK check;
 ;              parity, framing and timeout errors as events; command sequencing: host/ps2.py (ps2_design.md)
-; words: 47 | clk/bit: external (device clock 10-16.7 kHz) | max: device CLK phases >= 14 clk (1.79 MHz, ISS) | engines: 1
+; words: 49 | clk/bit: external (device clock 10-16.7 kHz) | max: device CLK phases >= 14 clk (1.79 MHz, ISS) | engines: 1
 ; pins: p0 = CLK (uio[6], od; PINS2 = 1: uio[4]), p1 = DATA (uio[5], od, shift input; PINS2 = 1: uio[7]); pull-ups
 ; host: 0x00 release (the device may send), 0x01 inhibit (CLK held low until the next command), 0x02 + byte: send
-;       it -> evt 1 ACK, evt 2 NACK (pulse 11 without ACK) or evt 5 TMO; the lines are released afterwards.
+;       it (CLK held low from the 0x02 on) -> evt 1 ACK, evt 2 NACK (pulse 11 without ACK) or evt 5 TMO; the lines are released afterwards.
 ;       Device frames: the byte is pushed, preceded by evt 3 PERR on a parity error; start 1 or stop 0: evt 4 FERR
 ;       (byte dropped; all 11 bits are read either way); evt 5 TMO: no CLK fall for TBIT inside a frame (byte
-;       dropped, lines released)
+;       dropped, lines released). CLK is held low from the last fall of a frame until idle (flow control while
+;       the host FIFO is full); a 0x00 while released turns the frame start watcher off for ~20 clk
 ; timing: device frames are read at the CLK falls (frame start = watcher 1 on a CLK fall, armed in idle). Send:
 ;       CLK low for (TBIT + 1) x 16 clk (200 us; the inhibit reuses the frame timeout), DATA low TDSU x 16 clk
 ;       (5 us) before CLK is released, each bit put on DATA 1-5 clk + pad after a device CLK fall, stop = DATA
 ;       released, ACK read at the 11th fall. Timer prescaler 16, restarted by every CLK fall (TCFG hard sync): watcher 0 (tick) =
 ;       no fall for TBIT x 16 clk (200 us) inside a frame, or no first device clock TFIRST x 16 clk (15 ms) after
 ;       the request-to-send
-; bound: bit guards armed <= 13 clk after a CLK fall; frame start: first data guard <= 25 clk after the start fall
+; bound: bit guards armed <= 17 clk after a CLK fall; frame start: first data guard <= 25 clk after the start fall
 
 .equ CLK_HZ, 50000000
 .equ MHZ,   CLK_HZ / 1000000
 .equ TBIT,  MHZ * 200 / 16      ; inside a frame: CLK fall to CLK fall at most 200 us; also the inhibit (>= 100 us)
-.equ TDSU,  MHZ * 5 / 16        ; DATA low before CLK is released: 5 us
+.equ TDSU,  (MHZ * 5 + 15) / 16  ; DATA low before CLK is released: >= 5 us
 .equ TFIRST, CLK_HZ / 1000 * 15 / 16  ; request-to-send to the first device clock: 15 ms
 .equ PINS2, 0                   ; 1 = CLK uio[4], DATA uio[7] (second instance on one bus)
 .equ H_ACK, 1
@@ -77,10 +78,10 @@ cmd:    @hrx  : watch #0                ; a command: watchers off before it is t
         shr   R2, R2                    ; CY = bit 0
         jc    inh                       ; 0x01: inhibit
         jz    idle                      ; 0x00: release
-        @hrx  : pull S                  ; 0x02: the byte to send
+        p0 <- 0                         ; 0x02: inhibit at once (no frame is missed while the byte comes)
+        @hrx  : pull S                  ; the byte to send
         li    R2, #0x37
         wcfg  SHCFG, R2                 ; 8 bits, LSB first, input p1
-        p0 <- 0                         ; inhibit
         tsync                           ; TBIT; the CLK fall this causes restarts it with the same period
         @tock : p1 <- 0                 ; DATA low (start bit)
         @tick : p0 <- 1                 ; CLK released: request-to-send
@@ -91,7 +92,8 @@ cmd:    @hrx  : watch #0                ; a command: watchers off before it is t
         @fall p0 : p1 <- q              ; odd parity
         @fall p0 : p1 <- 1              ; stop: DATA released
         @fall p0 : smp                  ; pulse 11: ACK = DATA low
-        .deadline 13
+        .deadline 17
+        p0 <- 0                         ; CLK held low until idle: no frame starts while the result waits
         watch #0
         jb    nack
         @htx  : evt #H_ACK
@@ -107,7 +109,8 @@ rx:     shin                            ; start bit, read just after the fall th
         .deadline 5
         @fall p0 : smp                  ; parity
         @fall p0 : smp                  ; stop
-        .deadline 25, rok
+        .deadline 29, rok
+        p0 <- 0                         ; CLK held low until idle (flow control if the host FIFO is full)
         watch #0
         jnb   ferr
         shr   S, S                      ; CY = start bit, S = data

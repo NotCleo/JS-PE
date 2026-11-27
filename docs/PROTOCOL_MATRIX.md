@@ -150,7 +150,7 @@ Every Cleo cell was checked against [CAPABILITY.md](CAPABILITY.md), the program 
 | Host → device | Inhibit (CLK low ≥ 100 µs), request-to-send, device clocks, ACK bit | DONE both roles: host inhibits 200 µs, DATA low 5 µs before release, bits after each device fall, ACK read at pulse 11; device detects request-to-send (watcher), clocks 11 pulses, samples mid-high, ACK |
 | Roles | Keyboard/mouse device, host, sniffer | DONE device (ps2_dev.s), host (ps2_host.s), device ↔ host on one bus (R) · PROG sniffer (not built; optional) |
 | Keyboard, mouse command models | Scan codes, commands, mouse packets and IDs | HOST DONE (host/ps2.py: keyboard FF/ED/F2/F0/F3/F4/F5/F6/EE/FE, set-2 scan codes; mouse FF/F2/F3/E8/E6/E7/E9/F4/F5/F6, IntelliMouse ID 3 and 4, 3/4-byte packets; host driver with FE resend) |
-| Errors | Parity error, timeout, resend | DONE device: host inhibit before the stop bit → abort + resend, parity error (ACK, FE asked), stop 0 (no ACK, clocks until DATA released, FE), host gives up mid-byte; host: parity, start/stop framing, per-bit timeout 200 µs, no first clock 15 ms, NACK |
+| Errors | Parity error, timeout, resend | DONE device: host inhibit before the 11th fall → abort + resend, parity error (ACK, FE asked), stop 0 (no ACK, clocks until DATA released, FE), host gives up mid-byte; host: parity, start/stop framing, per-bit timeout 200 µs, no first clock 15 ms, NACK |
 
 ## 9. CAN
 
@@ -182,8 +182,8 @@ Program/host only: no change to the RTL, the ISA or the ISS. Status codes as abo
 | 1.4 | Debug | SWD DP emulator (DPIDR, CTRL/STAT, SELECT, RDBUFF, WAIT/FAULT, parity error) | DONE: swd_dp.s 189 + 5 box words, ≤ 781 kHz back to back (D233) |
 | 1.5 | Debug | SWD v2 multidrop (TARGETSEL) | DONE: swd_dp.s `MDROP=1` (+20 words), host raw sequence (D233) |
 | 1.6 | Debug | SWO receive (UART/NRZ and Manchester, reusing uart_rx / manchester) | PART: NRZ DONE (uart_rx unchanged, ITM tests); Manchester PROG — measured: manchester.s needs a 0x55 preamble + SFD and is MSB first, SWO Manchester has one start bit and is LSB first (D234) |
-| 2.1 | PS/2 | Device: keyboard and mouse framing, clock generation, request-to-send, ACK | DONE: ps2_dev.s 67 words, 12.5 kHz as written, ≤ 893 kHz (D236) |
-| 2.2 | PS/2 | Host: inhibit, request-to-send, receive, parity/timeout errors | DONE: ps2_host.s 47 words, device clock phases ≥ 14 clk; PS2-R1 lockstep with ps2_dev (D237) |
+| 2.1 | PS/2 | Device: keyboard and mouse framing, clock generation, request-to-send, ACK | DONE: ps2_dev.s 70 words, 12.5 kHz as written, ≤ 893 kHz (D236, D238) |
+| 2.2 | PS/2 | Host: inhibit, request-to-send, receive, parity/timeout errors | DONE: ps2_host.s 49 words, device clock phases ≥ 14 clk; PS2-R1 lockstep with ps2_dev (D237, D238) |
 | 3.1 | Ethernet | 10BASE-T normal link pulses | PROG |
 | 3.2 | Ethernet | FLP auto-negotiation burst | PROG |
 | 3.3 | Ethernet | CRC-32 on the LFSR at program rate | PROG |

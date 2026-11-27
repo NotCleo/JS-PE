@@ -147,6 +147,30 @@ def test_dev_inhibit_mid_frame(k):
     assert r.host.viol == [] and r.c.eng[0].ovr == 0
 
 
+@pytest.mark.parametrize("k,delay", [(10, 160), (10, 190), (9, 160), (1, 120)])
+def test_dev_inhibit_in_clk_high(k, delay):
+    # the host inhibit starts in CLK high after the device's check (stop bit: the window before the 11th fall)
+    half = 100
+    r = DevRun(ps2.Keyboard(), [("inhibit", k, delay, 3 * half)], half, k % 4)
+    r.link.queue([0xA5, 0x3C])
+    r.run(13 * 2 * half * 6, until=lambda c: len(r.host.frames) == 2)
+    r.run(4 * half)
+    assert [f[0] for f in r.host.frames] == [0xA5, 0x3C] and [len(a) for a in r.host.aborted] == [k]
+    assert items(r.c, 0) == [("ev", ps2.DEV_ABORT), ("ev", ps2.DEV_SENT), ("ev", ps2.DEV_SENT)]
+
+
+@pytest.mark.parametrize("w", [100, 130, 160, 220, 280, 340])
+def test_dev_short_inhibit_near_start(w):
+    # a 2.5-HALF inhibit (100 us at 12.5 kHz) around the start bit is never missed: the byte arrives whole
+    half = 100
+    r = DevRun(ps2.Keyboard(), [("wait", w), ("hold", 250)], half, w % 4)
+    r.link.queue([0xA5])
+    r.run(13 * 2 * half * 4, until=lambda c: len(r.host.frames) == 1)
+    r.run(4 * half)
+    assert [f[0] for f in r.host.frames] == [0xA5] and r.link.sent == [0xA5] and r.host.viol == []
+    assert items(r.c, 0)[-1] == ("ev", ps2.DEV_SENT)
+
+
 def test_dev_inhibit_before_start():
     # CLK held low by the host: the device waits; a byte only goes after the bus was idle IDLE clk
     half = 100
@@ -164,14 +188,15 @@ def test_dev_receive_errors():
     half = 120
     ops = [("send", 0xF4, {"bad_parity": True}), ("wait", 40 * half), ("send", 0xF4, {"stop0": True}),
            ("wait", 40 * half), ("send", 0xF4, {"cut": 4}), ("wait", 40 * half), ("send", 0xF4, {"hd": 2}),
+           ("wait", 40 * half), ("send", 0xF4, {"cut": 8}), ("wait", 40 * half), ("send", 0xF4, {"cut": 9}),
            ("wait", 40 * half)]
     r = DevRun(ps2.Keyboard(), ops, half, 3)
-    r.run(400 * half, until=lambda c: r.host.done)
-    assert r.host.results == [0, None, None, 0]
+    r.run(600 * half, until=lambda c: r.host.done)
+    assert r.host.results == [0, None, None, 0, None, None]
     ev = items(r.c, 0)
-    S = ("ev", ps2.DEV_SENT)
-    assert ev == [("ev", ps2.DEV_PERR), 0xF4, S, ("ev", ps2.DEV_FERR), S, ("ev", ps2.DEV_RABORT), 0xF4, S]
-    assert [f[0] for f in r.host.frames] == [0xFE, 0xFE, 0xFA] and r.link.errors == [ps2.DEV_FERR, ps2.DEV_RABORT]
+    S, RA = ("ev", ps2.DEV_SENT), ("ev", ps2.DEV_RABORT)
+    assert ev == [("ev", ps2.DEV_PERR), 0xF4, S, ("ev", ps2.DEV_FERR), S, RA, 0xF4, S, RA, RA]
+    assert [f[0] for f in r.host.frames] == [0xFE, 0xFE, 0xFA] and r.link.errors == [ps2.DEV_FERR] + [ps2.DEV_RABORT] * 3
     assert r.c.eng[0].ovr == 0
 
 
@@ -320,6 +345,43 @@ def test_host_send_errors():
     r.run(10 * half)
     assert (r.c.uio_oe >> 6 & 1, r.c.uio_oe >> 5 & 1) == (0, 0)
     host_ok(r, 16 * host_defs(half)["TBIT"])
+
+
+def test_host_send_split_and_cut():
+    # 0x02 then the data byte much later: CLK is held low meanwhile, the device's byte waits (not lost); the
+    # device stops clocking after 5 pulses of a command -> TMO
+    half = 100
+    kb = ps2.Keyboard()
+    d = Ps2DeviceModel(half, on_rx=kb_model(kb))
+    r = HostRun(d, half, 1)
+    r.run(500)
+    r.send(b"\x02")
+    r.run(200)
+    d.tx.append((0x1C, {}))
+    r.run(30 * half)
+    assert d.sent == [] and d.aborts == 0
+    r.send(b"\xEE")
+    assert [r.recv() for _ in range(3)] == [("ack",), ("byte", 0xEE, True), ("byte", 0x1C, True)]
+    d.rxo = {"cut": 5}
+    r.send(ps2.h_send(0xF4))
+    assert r.recv() == ("tmo",)
+    r.run(10 * half)
+    assert (r.c.uio_oe >> 6 & 1, r.c.uio_oe >> 5 & 1) == (0, 0)
+    host_ok(r, 16 * host_defs(half)["TBIT"])
+
+
+def test_host_fifo_full_holds_clk():
+    # the RP2350 does not read for a while: the host holds CLK low after each frame instead of losing bytes
+    half = 60
+    data = list(range(0x10, 0x1A))
+    d = Ps2DeviceModel(half, [(b, {}) for b in data])
+    r = HostRun(d, half, 2)
+    r.c.tx_block[0] = True
+    r.run(13 * 2 * half * 8)
+    assert len(d.sent) < len(data)
+    r.c.tx_block[0] = False
+    r.run(13 * 2 * half * 12, until=lambda c: len(r.results()) == len(data))
+    assert r.results() == [("byte", b, True) for b in data] and r.c.eng[0].ovr == 0
 
 
 def test_host_inhibit_and_release():
