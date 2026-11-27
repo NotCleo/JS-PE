@@ -1417,9 +1417,9 @@ class Ps2DeviceModel(_Ps2Proc):
     # DATA low from the middle of pulse 10 high to the middle of pulse 11 high. tx = [(byte, opts)]: bad_parity,
     # start1, stop0, cut = bits sent before the clock stops. rx: noclock (no pulses), nack (pulse 11, no ACK).
     # Results: got = [(byte, parity ok, stop ok)], sent, aborts, inh = host CLK-low lengths, viol = host DATA change
-    # while CLK high in a receive.
-    def __init__(self, half, tx=(), idle=None, rx=None):
-        self.half, self.tx = half, list(tx)
+    # while CLK high in a receive. on_rx(byte, parity ok, stop ok) -> response bytes, sent ahead of the queue.
+    def __init__(self, half, tx=(), idle=None, rx=None, on_rx=None):
+        self.half, self.tx, self.on_rx = half, list(tx), on_rx
         self.idle = half if idle is None else idle
         self.rxo = dict(rx or {})
         self.got, self.sent, self.aborts, self.inh, self.viol = [], [], 0, [], []
@@ -1494,3 +1494,5 @@ class Ps2DeviceModel(_Ps2Proc):
         self.rxing = False
         v, _, pok, sok = ps2_check([0] + bits)
         self.got.append((v, pok, sok))
+        if self.on_rx:
+            self.tx[:0] = [(x, {}) for x in self.on_rx(v, pok, sok)]
